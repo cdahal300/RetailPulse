@@ -23,7 +23,10 @@
 
 ## Release evidence
 
-- Test command: focused `dotnet test` identity/authorization unit, integration, and contract filters plus PWA auth Playwright tests.
+- Test command:
+	- `dotnet test tests/Unit/RetailPulse.UnitTests/RetailPulse.UnitTests.csproj --filter "IdentityAuthorization|IdentityLifecycle"`
+	- `dotnet test tests/Integration/RetailPulse.IntegrationTests/RetailPulse.IntegrationTests.csproj --filter "IdentityAuthorizationEndpointIntegrationTests"`
+	- `dotnet test tests/Contract/RetailPulse.ContractTests/RetailPulse.ContractTests.csproj --filter "IdentityAuthorizationContractTests"`
 - Required environment: Entra test tenant or signed-token fixture, isolated stores/tenants, and registered test devices.
 - Evidence artifact: role matrix, denial report, revocation timing, audit sample, and device/browser results.
-- Known gaps: production conditional-access policies and tenant-specific identity configuration require staging sign-off.
+- Known gaps: production conditional-access policies, live Entra/JWKS integration, and tenant-specific identity configuration require staging sign-off.

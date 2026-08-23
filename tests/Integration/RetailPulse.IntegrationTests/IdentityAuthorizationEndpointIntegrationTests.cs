@@ -95,6 +95,8 @@ public sealed class IdentityAuthorizationEndpointIntegrationTests : IClassFixtur
             roles: "Owner",
             issuedAt: DateTimeOffset.UtcNow.AddMinutes(-5),
             expiresAt: DateTimeOffset.UtcNow.AddMinutes(30));
+        ownerRequest.Headers.Add("X-RetailPulse-Device-Id", "device-1");
+        ownerRequest.Headers.Add("X-RetailPulse-Command-Id", "register-device-1");
         var owner = await cloudClient.SendAsync(ownerRequest);
         Assert.Equal(HttpStatusCode.OK, owner.StatusCode);
 
@@ -108,8 +110,45 @@ public sealed class IdentityAuthorizationEndpointIntegrationTests : IClassFixtur
             roles: "Device",
             issuedAt: DateTimeOffset.UtcNow.AddMinutes(-5),
             expiresAt: DateTimeOffset.UtcNow.AddMinutes(30));
+        deviceRequest.Headers.Add("X-RetailPulse-Device-Id", "device-2");
+        deviceRequest.Headers.Add("X-RetailPulse-Command-Id", "register-device-2");
         var device = await cloudClient.SendAsync(deviceRequest);
         Assert.Equal(HttpStatusCode.Forbidden, device.StatusCode);
+    }
+
+    [Fact]
+    public async Task Cloud_role_change_revokes_existing_subject_session()
+    {
+        await using var factory = new WebApplicationFactory<CloudApiMarker>();
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { BaseAddress = new Uri("https://localhost") });
+
+        using var roleChangeRequest = CloudRequest(
+            "/api/v1/tenants/tenant-1/stores/store-1/users/manager-1/roles",
+            tokenId: "owner-token",
+            subjectId: "owner-1",
+            tenantId: "tenant-1",
+            storeId: null,
+            principalType: "User",
+            roles: "Owner",
+            issuedAt: DateTimeOffset.UtcNow.AddMinutes(-5),
+            expiresAt: DateTimeOffset.UtcNow.AddMinutes(30));
+        roleChangeRequest.Headers.Add("X-RetailPulse-Command-Id", "role-change-1");
+        roleChangeRequest.Headers.Add("X-RetailPulse-New-Roles", "Cashier");
+        var roleChange = await client.SendAsync(roleChangeRequest);
+        Assert.Equal(HttpStatusCode.OK, roleChange.StatusCode);
+
+        using var managerRequest = CloudRequest(
+            "/api/v1/tenants/tenant-1/stores/store-1/manager/inventory-adjustments",
+            tokenId: "manager-token",
+            subjectId: "manager-1",
+            tenantId: "tenant-1",
+            storeId: "store-1",
+            principalType: "User",
+            roles: "Manager",
+            issuedAt: DateTimeOffset.UtcNow.AddMinutes(-5),
+            expiresAt: DateTimeOffset.UtcNow.AddMinutes(30));
+        var managerAfterRoleChange = await client.SendAsync(managerRequest);
+        Assert.Equal(HttpStatusCode.Unauthorized, managerAfterRoleChange.StatusCode);
     }
 
     [Fact]
@@ -161,6 +200,9 @@ public sealed class IdentityAuthorizationEndpointIntegrationTests : IClassFixtur
     [Fact]
     public async Task Edge_rejects_expired_token_and_allows_bounded_cached_session()
     {
+        await using var factory = new WebApplicationFactory<EdgeApiMarker>();
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { BaseAddress = new Uri("https://localhost") });
+
         using var expiredRequest = EdgeRequest(
             "/api/v1/edge/tenants/tenant-1/stores/store-1/inventory/adjust",
             tokenId: "expired-manager-token",
@@ -172,7 +214,7 @@ public sealed class IdentityAuthorizationEndpointIntegrationTests : IClassFixtur
             issuedAt: DateTimeOffset.UtcNow.AddHours(-2),
             expiresAt: DateTimeOffset.UtcNow.AddMinutes(-1),
             sessionId: "expired-session");
-        var expired = await edgeClient.SendAsync(expiredRequest);
+        var expired = await client.SendAsync(expiredRequest);
         Assert.Equal(HttpStatusCode.Unauthorized, expired.StatusCode);
 
         using var primeSessionRequest = EdgeRequest(
@@ -186,13 +228,32 @@ public sealed class IdentityAuthorizationEndpointIntegrationTests : IClassFixtur
             issuedAt: DateTimeOffset.UtcNow.AddMinutes(-5),
             expiresAt: DateTimeOffset.UtcNow.AddMinutes(30),
             sessionId: "offline-session");
-        var primed = await edgeClient.SendAsync(primeSessionRequest);
+        var primed = await client.SendAsync(primeSessionRequest);
         Assert.Equal(HttpStatusCode.OK, primed.StatusCode);
 
         using var cachedRequest = new HttpRequestMessage(HttpMethod.Post, "/api/v1/edge/tenants/tenant-1/stores/store-1/checkout");
         cachedRequest.Headers.Add("X-RetailPulse-Session-Id", "offline-session");
-        var cached = await edgeClient.SendAsync(cachedRequest);
+        var cached = await client.SendAsync(cachedRequest);
         Assert.Equal(HttpStatusCode.OK, cached.StatusCode);
+
+        using var revokeRequest = EdgeRequest(
+            "/api/v1/edge/tenants/tenant-1/stores/store-1/identity/revoke-subject/manager-1",
+            tokenId: "owner-token",
+            subjectId: "owner-1",
+            tenantId: "tenant-1",
+            storeId: null,
+            principalType: "User",
+            roles: "Owner",
+            issuedAt: DateTimeOffset.UtcNow.AddMinutes(-5),
+            expiresAt: DateTimeOffset.UtcNow.AddMinutes(30),
+            sessionId: "owner-session");
+        var revokeResult = await client.SendAsync(revokeRequest);
+        Assert.Equal(HttpStatusCode.Accepted, revokeResult.StatusCode);
+
+        using var cachedAfterRevoke = new HttpRequestMessage(HttpMethod.Post, "/api/v1/edge/tenants/tenant-1/stores/store-1/checkout");
+        cachedAfterRevoke.Headers.Add("X-RetailPulse-Session-Id", "offline-session");
+        var rejectedAfterRevoke = await client.SendAsync(cachedAfterRevoke);
+        Assert.Equal(HttpStatusCode.Unauthorized, rejectedAfterRevoke.StatusCode);
     }
 
     [Fact]

@@ -10,7 +10,8 @@ public enum AuthorizationAction
     AdjustInventory,
     ConfigureStore,
     RegisterDevice,
-    RevokeDevice
+    RevokeDevice,
+    ManageRoles
 }
 
 public enum AuthorizationFailure
@@ -113,6 +114,7 @@ public static class IdentityAuthorizationPolicy
         AuthorizationAction.ConfigureStore => [IdentityRole.Manager],
         AuthorizationAction.RegisterDevice => [IdentityRole.Owner],
         AuthorizationAction.RevokeDevice => [IdentityRole.Owner],
+        AuthorizationAction.ManageRoles => [IdentityRole.Owner],
         _ => []
     };
 }

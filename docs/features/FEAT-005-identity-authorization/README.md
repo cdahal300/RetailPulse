@@ -31,3 +31,19 @@ Required before production PWA and manager commands. Test token expiry, revocati
 - [Tenant isolation checklist](../../planning/tenant-isolation-checklist.md)
 - [QA test plan](qa-test-plan.md)
 - [Rollout and operations](rollout.md)
+
+## Implementation Status
+
+- Completed: server-side protected cloud and edge routes for role and scope checks.
+- Completed: cashier, manager, owner, and device role matrix enforcement.
+- Completed: bounded offline edge session cache with revocation-aware invalidation.
+- Completed: idempotent device registration and revocation commands.
+- Completed: user role change command with revocation-based session refresh behavior.
+- Completed: audit events for privileged actions and token rejections.
+- Completed: event contracts for UserRoleChanged.v1, DeviceRegistered.v1, DeviceRevoked.v1, and PrivilegedActionAudited.v1.
+
+## Verification Evidence
+
+- Unit tests: IdentityAuthorization and IdentityLifecycle test classes pass.
+- Integration tests: IdentityAuthorizationEndpointIntegrationTests pass, including 401/403/200 matrix, cross-store denial, role changes, and revocation.
+- Contract tests: IdentityAuthorizationContractTests pass for required event metadata and schema versioning.

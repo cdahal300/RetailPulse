@@ -2,18 +2,20 @@ using RetailPulse.BuildingBlocks;
 
 var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddSingleton<IIdentityAuditEmitter, NoOpIdentityAuditEmitter>();
+builder.Services.AddSingleton<IIdentityLifecycleService, InMemoryIdentityLifecycleService>();
+builder.Services.AddSingleton<IIdentityRevocationStore, InMemoryIdentityRevocationStore>();
 
 var app = builder.Build();
 app.UseHttpsRedirection();
 
-app.MapGet("/api/v1/me", (HttpRequest request) =>
+app.MapGet("/api/v1/me", (HttpRequest request, IIdentityRevocationStore revocations) =>
 {
     if (!TryReadToken(request, out var token))
     {
         return Results.Unauthorized();
     }
 
-    if (DateTimeOffset.UtcNow >= token.ExpiresAt)
+    if (DateTimeOffset.UtcNow >= token.ExpiresAt || revocations.IsTokenRevoked(token.TokenId) || revocations.IsSubjectRevoked(token.TenantId, token.SubjectId))
     {
         return Results.Unauthorized();
     }
@@ -29,164 +31,178 @@ app.MapGet("/api/v1/me", (HttpRequest request) =>
 });
 
 app.MapPost("/api/v1/tenants/{tenantId}/stores/{storeId}/manager/inventory-adjustments",
-    async (string tenantId, string storeId, HttpRequest request, IIdentityAuditEmitter auditEmitter) =>
+    async (string tenantId, string storeId, HttpRequest request, IIdentityAuditEmitter auditEmitter, IIdentityRevocationStore revocations) =>
     {
-        var correlationId = CorrelationId(request);
-        var now = DateTimeOffset.UtcNow;
-        if (!TryReadToken(request, out var token))
+        var authorization = await AuthorizeAsync(request, new TenantStoreScope(tenantId, storeId), AuthorizationAction.AdjustInventory, auditEmitter, revocations);
+        if (authorization.Result is not null)
         {
-            await auditEmitter.EmitTokenRejectedAsync(new(
-                EventId: Guid.NewGuid().ToString("N"),
-                AggregateId: $"tenant:{tenantId}:store:{storeId}",
-                TenantId: tenantId,
-                StoreId: storeId,
-                OccurredAt: now,
-                CorrelationId: correlationId,
-                SubjectId: null,
-                Action: AuthorizationAction.AdjustInventory.ToString(),
-                Failure: AuthorizationFailure.InvalidToken,
-                Outcome: "Rejected"));
-            return Results.Unauthorized();
+            return authorization.Result;
         }
 
-        var decision = IdentityAuthorizationPolicy.Evaluate(
-            token,
-            new AuthorizationRequest(new TenantStoreScope(tenantId, storeId), AuthorizationAction.AdjustInventory),
-            now);
-
-        if (decision.Allowed)
+        var token = authorization.Token!;
+        return Results.Ok(new
         {
-            await auditEmitter.EmitPrivilegedActionAsync(new(
-                EventId: Guid.NewGuid().ToString("N"),
-                AggregateId: token.SubjectId,
-                TenantId: token.TenantId,
-                StoreId: storeId,
-                OccurredAt: now,
-                CorrelationId: correlationId,
-                SubjectId: token.SubjectId,
-                PrincipalType: token.PrincipalType.ToString(),
-                Action: AuthorizationAction.AdjustInventory.ToString(),
-                Outcome: "Authorized"));
-            return Results.Ok(new
-            {
-                Outcome = "Authorized",
-                TenantId = tenantId,
-                StoreId = storeId,
-                ActorId = token.SubjectId,
-                Action = AuthorizationAction.AdjustInventory.ToString()
-            });
-        }
-
-        if (decision.Failure is AuthorizationFailure.ExpiredToken or AuthorizationFailure.InvalidToken or AuthorizationFailure.Revoked)
-        {
-            await auditEmitter.EmitTokenRejectedAsync(new(
-                EventId: Guid.NewGuid().ToString("N"),
-                AggregateId: token.SubjectId,
-                TenantId: token.TenantId,
-                StoreId: storeId,
-                OccurredAt: now,
-                CorrelationId: correlationId,
-                SubjectId: token.SubjectId,
-                Action: AuthorizationAction.AdjustInventory.ToString(),
-                Failure: decision.Failure ?? AuthorizationFailure.InvalidToken,
-                Outcome: "Rejected"));
-            return Results.Unauthorized();
-        }
-
-        await auditEmitter.EmitTokenRejectedAsync(new(
-            EventId: Guid.NewGuid().ToString("N"),
-            AggregateId: token.SubjectId,
-            TenantId: token.TenantId,
-            StoreId: storeId,
-            OccurredAt: now,
-            CorrelationId: correlationId,
-            SubjectId: token.SubjectId,
-            Action: AuthorizationAction.AdjustInventory.ToString(),
-            Failure: decision.Failure ?? AuthorizationFailure.MissingRole,
-            Outcome: "Rejected"));
-        return Results.StatusCode(StatusCodes.Status403Forbidden);
+            Outcome = "Authorized",
+            TenantId = tenantId,
+            StoreId = storeId,
+            ActorId = token.SubjectId,
+            Action = AuthorizationAction.AdjustInventory.ToString()
+        });
     });
 
 app.MapPost("/api/v1/tenants/{tenantId}/stores/{storeId}/devices/register",
-    async (string tenantId, string storeId, HttpRequest request, IIdentityAuditEmitter auditEmitter) =>
+    async (string tenantId, string storeId, HttpRequest request, IIdentityAuditEmitter auditEmitter, IIdentityRevocationStore revocations, IIdentityLifecycleService lifecycle) =>
     {
-        var correlationId = CorrelationId(request);
+        var authorization = await AuthorizeAsync(request, new TenantStoreScope(tenantId, storeId), AuthorizationAction.RegisterDevice, auditEmitter, revocations);
+        if (authorization.Result is not null)
+        {
+            return authorization.Result;
+        }
+
+        var actor = authorization.Token!;
+        var deviceId = ReadHeader(request, "X-RetailPulse-Device-Id");
+        var commandId = ReadHeader(request, "X-RetailPulse-Command-Id");
+        if (string.IsNullOrWhiteSpace(deviceId) || string.IsNullOrWhiteSpace(commandId))
+        {
+            return Results.BadRequest(new { Error = "X-RetailPulse-Device-Id and X-RetailPulse-Command-Id are required." });
+        }
+
         var now = DateTimeOffset.UtcNow;
-        if (!TryReadToken(request, out var token))
+        var command = new DeviceRegistrationCommand(tenantId, storeId, deviceId, commandId, actor.SubjectId, CorrelationId(request), now);
+        var result = await lifecycle.RegisterDeviceAsync(command);
+        if (result.Outcome == IdentityCommandOutcome.Accepted)
         {
-            await auditEmitter.EmitTokenRejectedAsync(new(
-                EventId: Guid.NewGuid().ToString("N"),
-                AggregateId: $"tenant:{tenantId}:store:{storeId}",
-                TenantId: tenantId,
-                StoreId: storeId,
-                OccurredAt: now,
-                CorrelationId: correlationId,
-                SubjectId: null,
-                Action: AuthorizationAction.RegisterDevice.ToString(),
-                Failure: AuthorizationFailure.InvalidToken,
-                Outcome: "Rejected"));
-            return Results.Unauthorized();
+            return Results.Ok(new { Outcome = "Accepted", Event = result.RegisteredEvent });
         }
 
-        var decision = IdentityAuthorizationPolicy.Evaluate(
-            token,
-            new AuthorizationRequest(new TenantStoreScope(tenantId, storeId), AuthorizationAction.RegisterDevice),
-            now);
+        return Results.Ok(new { Outcome = "Duplicate", Event = result.RegisteredEvent });
+    });
 
-        if (decision.Allowed)
+app.MapPost("/api/v1/tenants/{tenantId}/stores/{storeId}/devices/{deviceId}/revoke",
+    async (string tenantId, string storeId, string deviceId, HttpRequest request, IIdentityAuditEmitter auditEmitter, IIdentityRevocationStore revocations, IIdentityLifecycleService lifecycle) =>
+    {
+        var authorization = await AuthorizeAsync(request, new TenantStoreScope(tenantId, storeId), AuthorizationAction.RevokeDevice, auditEmitter, revocations);
+        if (authorization.Result is not null)
         {
-            await auditEmitter.EmitPrivilegedActionAsync(new(
-                EventId: Guid.NewGuid().ToString("N"),
-                AggregateId: token.SubjectId,
-                TenantId: token.TenantId,
-                StoreId: storeId,
-                OccurredAt: now,
-                CorrelationId: correlationId,
-                SubjectId: token.SubjectId,
-                PrincipalType: token.PrincipalType.ToString(),
-                Action: AuthorizationAction.RegisterDevice.ToString(),
-                Outcome: "Authorized"));
-            return Results.Ok(new
-            {
-                Outcome = "Authorized",
-                TenantId = tenantId,
-                StoreId = storeId,
-                ActorId = token.SubjectId,
-                Action = AuthorizationAction.RegisterDevice.ToString()
-            });
+            return authorization.Result;
         }
 
-        if (decision.Failure is AuthorizationFailure.ExpiredToken or AuthorizationFailure.InvalidToken or AuthorizationFailure.Revoked)
+        var actor = authorization.Token!;
+        var commandId = ReadHeader(request, "X-RetailPulse-Command-Id");
+        if (string.IsNullOrWhiteSpace(commandId))
         {
-            await auditEmitter.EmitTokenRejectedAsync(new(
-                EventId: Guid.NewGuid().ToString("N"),
-                AggregateId: token.SubjectId,
-                TenantId: token.TenantId,
-                StoreId: storeId,
-                OccurredAt: now,
-                CorrelationId: correlationId,
-                SubjectId: token.SubjectId,
-                Action: AuthorizationAction.RegisterDevice.ToString(),
-                Failure: decision.Failure ?? AuthorizationFailure.InvalidToken,
-                Outcome: "Rejected"));
-            return Results.Unauthorized();
+            return Results.BadRequest(new { Error = "X-RetailPulse-Command-Id is required." });
         }
 
+        var now = DateTimeOffset.UtcNow;
+        var command = new DeviceRevocationCommand(tenantId, storeId, deviceId, commandId, actor.SubjectId, CorrelationId(request), now);
+        var result = await lifecycle.RevokeDeviceAsync(command);
+        if (result.Outcome == IdentityCommandOutcome.NotFound)
+        {
+            return Results.NotFound();
+        }
+
+        revocations.RevokeSubject(tenantId, deviceId);
+        return Results.Ok(new { Outcome = result.Outcome.ToString(), Event = result.RevokedEvent });
+    });
+
+app.MapPost("/api/v1/tenants/{tenantId}/stores/{storeId}/users/{subjectId}/roles",
+    async (string tenantId, string storeId, string subjectId, HttpRequest request, IIdentityAuditEmitter auditEmitter, IIdentityRevocationStore revocations, IIdentityLifecycleService lifecycle) =>
+    {
+        var authorization = await AuthorizeAsync(request, new TenantStoreScope(tenantId, storeId), AuthorizationAction.ManageRoles, auditEmitter, revocations);
+        if (authorization.Result is not null)
+        {
+            return authorization.Result;
+        }
+
+        var commandId = ReadHeader(request, "X-RetailPulse-Command-Id");
+        var rolesRaw = ReadHeader(request, "X-RetailPulse-New-Roles");
+        if (string.IsNullOrWhiteSpace(commandId) || string.IsNullOrWhiteSpace(rolesRaw) || !TryParseRoles(rolesRaw, out var roles))
+        {
+            return Results.BadRequest(new { Error = "X-RetailPulse-Command-Id and valid X-RetailPulse-New-Roles are required." });
+        }
+
+        var actor = authorization.Token!;
+        var command = new UserRoleChangeCommand(tenantId, storeId, subjectId, roles, commandId, actor.SubjectId, CorrelationId(request), DateTimeOffset.UtcNow);
+        var result = await lifecycle.ChangeUserRolesAsync(command);
+        revocations.RevokeSubject(tenantId, subjectId);
+        return Results.Ok(new { Outcome = result.Outcome.ToString(), Event = result.RoleChangedEvent });
+    });
+
+app.Run();
+
+static async Task<(IResult? Result, IdentityToken? Token)> AuthorizeAsync(HttpRequest request, TenantStoreScope scope, AuthorizationAction action, IIdentityAuditEmitter auditEmitter, IIdentityRevocationStore revocations)
+{
+    var correlationId = CorrelationId(request);
+    var now = DateTimeOffset.UtcNow;
+    if (!TryReadToken(request, out var token))
+    {
+        await auditEmitter.EmitTokenRejectedAsync(new(
+            EventId: Guid.NewGuid().ToString("N"),
+            AggregateId: $"tenant:{scope.TenantId}:store:{scope.StoreId}",
+            TenantId: scope.TenantId,
+            StoreId: scope.StoreId,
+            OccurredAt: now,
+            CorrelationId: correlationId,
+            SubjectId: null,
+            Action: action.ToString(),
+            Failure: AuthorizationFailure.InvalidToken,
+            Outcome: "Rejected"));
+        return (Results.Unauthorized(), null);
+    }
+
+    if (revocations.IsTokenRevoked(token.TokenId) || revocations.IsSubjectRevoked(token.TenantId, token.SubjectId))
+    {
         await auditEmitter.EmitTokenRejectedAsync(new(
             EventId: Guid.NewGuid().ToString("N"),
             AggregateId: token.SubjectId,
             TenantId: token.TenantId,
-            StoreId: storeId,
+            StoreId: scope.StoreId,
             OccurredAt: now,
             CorrelationId: correlationId,
             SubjectId: token.SubjectId,
-            Action: AuthorizationAction.RegisterDevice.ToString(),
-            Failure: decision.Failure ?? AuthorizationFailure.MissingRole,
+            Action: action.ToString(),
+            Failure: AuthorizationFailure.Revoked,
             Outcome: "Rejected"));
-        return Results.StatusCode(StatusCodes.Status403Forbidden);
-    });
+        return (Results.Unauthorized(), null);
+    }
 
-app.Run();
+    var decision = IdentityAuthorizationPolicy.Evaluate(token, new AuthorizationRequest(scope, action), now);
+    if (decision.Allowed)
+    {
+        await auditEmitter.EmitPrivilegedActionAsync(new(
+            EventId: Guid.NewGuid().ToString("N"),
+            AggregateId: token.SubjectId,
+            TenantId: token.TenantId,
+            StoreId: scope.StoreId,
+            OccurredAt: now,
+            CorrelationId: correlationId,
+            SubjectId: token.SubjectId,
+            PrincipalType: token.PrincipalType.ToString(),
+            Action: action.ToString(),
+            Outcome: "Authorized"));
+        return (null, token);
+    }
+
+    await auditEmitter.EmitTokenRejectedAsync(new(
+        EventId: Guid.NewGuid().ToString("N"),
+        AggregateId: token.SubjectId,
+        TenantId: token.TenantId,
+        StoreId: scope.StoreId,
+        OccurredAt: now,
+        CorrelationId: correlationId,
+        SubjectId: token.SubjectId,
+        Action: action.ToString(),
+        Failure: decision.Failure ?? AuthorizationFailure.InvalidToken,
+        Outcome: "Rejected"));
+
+    if (decision.Failure is AuthorizationFailure.ExpiredToken or AuthorizationFailure.InvalidToken or AuthorizationFailure.Revoked)
+    {
+        return (Results.Unauthorized(), null);
+    }
+
+    return (Results.StatusCode(StatusCodes.Status403Forbidden), null);
+}
 
 static bool TryReadToken(HttpRequest request, out IdentityToken token)
 {
@@ -249,3 +265,21 @@ static string? ReadHeader(HttpRequest request, string key)
 }
 
 static string CorrelationId(HttpRequest request) => ReadHeader(request, "X-Correlation-Id") ?? Guid.NewGuid().ToString("N");
+
+static bool TryParseRoles(string rolesRaw, out IReadOnlyCollection<IdentityRole> roles)
+{
+    var parsed = new List<IdentityRole>();
+    foreach (var value in rolesRaw.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries))
+    {
+        if (!Enum.TryParse<IdentityRole>(value, ignoreCase: true, out var role))
+        {
+            roles = [];
+            return false;
+        }
+
+        parsed.Add(role);
+    }
+
+    roles = parsed;
+    return parsed.Count > 0;
+}

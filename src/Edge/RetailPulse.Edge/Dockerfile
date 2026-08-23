@@ -8,7 +8,7 @@ COPY src/BuildingBlocks/RetailPulse.BuildingBlocks/RetailPulse.BuildingBlocks.cs
 COPY src/Edge/RetailPulse.Edge/RetailPulse.Edge.csproj src/Edge/RetailPulse.Edge/
 
 # Restore dependencies
-RUN dotnet restore RetailPulse.sln
+RUN dotnet restore src/Edge/RetailPulse.Edge/RetailPulse.Edge.csproj
 
 # Copy source code
 COPY src/ src/

@@ -1,0 +1,44 @@
+{
+  "name": "RetailPulse POS MVP",
+  "dockerComposeFile": "docker-compose.yml",
+  "service": "app",
+  "workspaceFolder": "/workspaces/RetailPulse-POS-MVP",
+  "remoteUser": "vscode",
+  "features": {
+    "ghcr.io/devcontainers/features/dotnet:2": {
+      "version": "10.0"
+    },
+    "ghcr.io/devcontainers/features/node:1": {
+      "version": "22",
+      "nodeGypDependencies": true
+    },
+    "ghcr.io/devcontainers/features/azure-cli:1": {}
+  },
+  "forwardPorts": [5000, 5173, 5432, 6379],
+  "portsAttributes": {
+    "5000": { "label": "RetailPulse API" },
+    "5173": { "label": "RetailPulse PWA" },
+    "5432": { "label": "PostgreSQL" },
+    "6379": { "label": "Redis" }
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-dotnettools.csdevkit",
+        "ms-azuretools.vscode-azurecli",
+        "ms-azuretools.vscode-docker",
+        "ms-azuretools.vscode-bicep",
+        "dbaeumer.vscode-eslint",
+        "esbenp.prettier-vscode",
+        "ms-playwright.playwright"
+      ],
+      "settings": {
+        "dotnet.defaultSolution": "RetailPulse.sln",
+        "editor.formatOnSave": true,
+        "files.eol": "\\n"
+      }
+    }
+  },
+  "postCreateCommand": "bash .devcontainer/setup-tools.sh",
+  "shutdownAction": "stopCompose"
+}

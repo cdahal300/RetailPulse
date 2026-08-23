@@ -1,0 +1,42 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    volumes:
+      - ..:/workspaces/RetailPulse-POS-MVP:cached
+    command: sleep infinity
+    environment:
+      ConnectionStrings__Postgres: Host=postgres;Port=5432;Database=retailpulse;Username=retailpulse;Password=retailpulse-dev
+      ConnectionStrings__Redis: redis:6379
+      ASPNETCORE_ENVIRONMENT: Development
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: retailpulse
+      POSTGRES_USER: retailpulse
+      POSTGRES_PASSWORD: retailpulse-dev
+    volumes:
+      - retailpulse-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U retailpulse -d retailpulse"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    volumes:
+      - retailpulse-redis:/data
+
+volumes:
+  retailpulse-postgres:
+  retailpulse-redis:

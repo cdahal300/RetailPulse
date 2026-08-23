@@ -1,0 +1,9 @@
+{
+  "servers": {
+    "retailpulse-dev": {
+      "type": "stdio",
+      "command": "dotnet",
+      "args": ["run", "--project", "src/Tools/RetailPulse.DevMcp"]
+    }
+  }
+}

@@ -1,0 +1,6 @@
+@RetailPulse.Cloud_HostAddress = http://localhost:5019
+
+GET {{RetailPulse.Cloud_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###

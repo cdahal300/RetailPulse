@@ -1,0 +1,15 @@
+# Default reviewers
+* @retailpulse/platform
+
+# Architecture and product decisions
+/docs/architecture/ @retailpulse/architecture
+/docs/product/ @retailpulse/product
+/docs/planning/ @retailpulse/product @retailpulse/platform
+
+# Runtime and tests
+/src/ @retailpulse/engineering
+/tests/ @retailpulse/engineering @retailpulse/qa
+
+# Infrastructure and delivery
+/infra/ @retailpulse/platform
+/.github/workflows/ @retailpulse/platform

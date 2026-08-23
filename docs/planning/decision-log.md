@@ -1,0 +1,19 @@
+# MVP Decision Log
+
+These are the working decisions for the first US multi-tenant pilot. Decisions marked as a recommendation still require confirmation after hardware and payment-provider validation.
+
+| ID | Decision | Working baseline | Owner/status |
+|---|---|---|---|
+| D-001 | Target market | United States only for MVP; USD, US Eastern Time support first, with timezone stored per store | Product; accepted baseline |
+| D-002 | Tax and fiscal | Support US sales-tax configuration by store/jurisdiction. No federal fiscal device integration assumed. Confirm state/local tax provider and filing responsibilities before pilot | Product/legal; decision required |
+| D-003 | Payment provider | Shortlist Stripe Terminal, Square Terminal, and Adyen only after confirming US availability, terminal APIs, offline behavior, refunds, and support model. Do not select by API convenience alone | Payments; selection required |
+| D-004 | Hardware | Start with Windows 11 x64 POS stations for broad peripheral compatibility. Use Android only for a validated hardware bundle. Standard pilot bundle: touchscreen, barcode scanner, receipt printer, cash drawer, and provider-certified terminal | Store operations; recommendation |
+| D-005 | Tenant isolation | Shared PostgreSQL database with tenantId/storeId, scoped repositories, PostgreSQL row-level security where practical, isolated cache keys, scoped events, and cross-tenant security tests | Security/platform; accepted baseline |
+| D-006 | Offline authentication | Minimal bounded offline session for a registered device and cashier. Cache only required claims, expire within 8 hours or at store close, and fail closed for privileged changes. Checkout must not depend on identity-provider availability | Security/product; accepted baseline |
+| D-007 | Sync conflicts | Minimal deterministic policy: immutable completed sales are never overwritten; duplicate idempotency keys return the existing result; catalog conflicts prefer the server version; stock conflicts create a review record; no silent discard | Edge/cloud; accepted baseline |
+| D-008 | Retention/deletion | Minimize data. Keep transaction and audit records only for the period required by US tax, payment-provider, contractual, and privacy obligations. Default application retention is 90 days for operational logs and 30 days for transient telemetry unless policy requires longer | Security/legal; retention confirmation required |
+| D-009 | AKS and recovery | One US Azure region, one AKS cluster, separate namespaces/environments, managed Azure dependencies, daily backups, single-region recovery first. Define a secondary region only after pilot scale and business RTO are known | Platform; accepted MVP baseline |
+| D-010 | CI/CD approvals | Pull request approval plus automated checks; automatic deployment to development; one designated release approver for staging/production; feature activation is a separate approval | Engineering; accepted simple model |
+| D-011 | Analytics definitions | Net sales = completed approved sales minus completed refunds; pending/declined/cancelled excluded. Inventory uses movement ledger. Reports display freshness, store timezone, currency, and scope | Product/analytics; accepted baseline |
+| D-012 | AI policy | Asynchronous advisory summaries and explanations only. Send minimum aggregated data, no card data, and no unnecessary PII. Start with a monthly pilot budget alert of $50; disable or rate-limit on breach | Product/security; accepted minimal baseline |
+| D-013 | MVP success | 95% of pilot sales complete locally during tested outages; 100% local commit durability; zero duplicate business effects; 99% transient sync recovery within 15 minutes; zero cross-tenant access findings; manager PWA task completion >= 90% in usability testing | Product/operations; proposed targets |

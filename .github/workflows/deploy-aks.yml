@@ -1,0 +1,36 @@
+name: Deploy to AKS
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Target environment
+        required: true
+        type: choice
+        options: [development, staging, production]
+      image:
+        description: Immutable container image or digest to deploy
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  deploy:
+    name: Deploy approved image
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate deployment scaffold
+        shell: bash
+        run: |
+          test -d infra/environments || { echo "Missing infra/environments"; exit 1; }
+          test -d infra/modules || { echo "Missing infra/modules"; exit 1; }
+          test -d deploy || { echo "Missing deploy manifests or Helm chart"; exit 1; }
+          echo "Deployment manifests are present. Add Azure login, ACR pull, and AKS rollout steps in FEAT-007."
+          exit 1
+      # Add Azure federated login, ACR image verification, and Helm/kubectl rollout
+      # only after FEAT-006 infrastructure and deploy manifests are implemented.

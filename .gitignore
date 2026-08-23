@@ -1,0 +1,35 @@
+# Build output
+bin/
+obj/
+artifacts/
+TestResults/
+coverage/
+
+# Local development
+.env
+.env.*
+!.env.example
+*.local.json
+
+# IDE
+.vs/
+.idea/
+*.user
+*.suo
+
+# Node tooling
+node_modules/
+dist/
+
+# Local databases and generated diagrams
+*.db
+*.db-shm
+*.db-wal
+*.svg
+
+# Secrets and temporary files
+*.pfx
+*.key
+*.pem
+.temp/
+tmp/

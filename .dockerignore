@@ -1,0 +1,13 @@
+.git
+.gitignore
+.vscode
+.devcontainer
+node_modules
+bin
+obj
+artifacts
+TestResults
+coverage
+*.db
+*.db-shm
+*.db-wal

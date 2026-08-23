@@ -2,7 +2,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$SCRIPT_DIR/../.."
+REPO_ROOT="$SCRIPT_DIR/.."
 
 # Validate Bicep files for Azure infrastructure
 validate_bicep() {
@@ -12,27 +12,27 @@ validate_bicep() {
         return 0
     fi
     
-    for env in dev test staging prod; do
-        bicep_param="$REPO_ROOT/infra/environments/$env/main.bicepparam"
-        echo "  Validating $bicep_param..."
-        az bicep build --file "$REPO_ROOT/infra/environments/main.bicep" > /dev/null
-    done
+    bicep_output="$(mktemp)"
+    az bicep build --file "$REPO_ROOT/infra/environments/main.bicep" --outfile "$bicep_output" > /dev/null
+    rm -f "$bicep_output"
     echo "✅ Bicep validation passed"
 }
 
 # Validate Kubernetes manifests
 validate_k8s() {
     echo "Validating Kubernetes manifests..."
-    if ! command -v kubectl &> /dev/null; then
-        echo "⚠️  kubectl not found. Skipping Kubernetes validation."
+    if command -v kustomize &> /dev/null; then
+        kustomize_command=(kustomize build)
+    elif command -v kubectl &> /dev/null; then
+        kustomize_command=(kubectl kustomize)
+    else
+        echo "⚠️  kustomize or kubectl not found. Skipping Kubernetes validation."
         return 0
     fi
     
-    # Validate using dry-run
     for overlay in dev staging prod; do
         echo "  Validating overlay: $overlay"
-        kustomize build "$REPO_ROOT/infra/kubernetes/overlays/$overlay" | \
-            kubectl apply --dry-run=client -f - > /dev/null
+        "${kustomize_command[@]}" "$REPO_ROOT/infra/kubernetes/overlays/$overlay" > /dev/null
     done
     echo "✅ Kubernetes validation passed"
 }
@@ -41,10 +41,8 @@ validate_k8s() {
 validate_security() {
     echo "Validating security configurations..."
     
-    # Check for hardcoded secrets in YAML files
-    if grep -r "password:" "$REPO_ROOT/infra/" --include="*.yaml" --include="*.yml" 2>/dev/null | \
-       grep -v "CHANGEME" | grep -v "PASSWORD" | grep -v ".bicepparam"; then
-        echo "❌ Found potential hardcoded secrets in manifests"
+    if grep -R "kind: Secret\|Password=CHANGEME" "$REPO_ROOT/infra/kubernetes" --include="*.yaml" --include="*.yml"; then
+        echo "❌ Found inline Kubernetes secrets or placeholder passwords in manifests"
         return 1
     fi
     

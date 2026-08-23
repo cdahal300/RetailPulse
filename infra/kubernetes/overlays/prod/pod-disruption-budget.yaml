@@ -1,0 +1,21 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: cloud-api-pdb
+  namespace: retailpulse
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app: cloud-api
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: edge-api-pdb
+  namespace: retailpulse
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app: edge-api

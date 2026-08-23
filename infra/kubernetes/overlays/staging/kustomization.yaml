@@ -3,32 +3,34 @@ kind: Kustomization
 
 namespace: retailpulse
 
-bases:
+resources:
   - ../../base
-
-# Environment-specific ConfigMap values
-configMapGenerator:
-  - name: retailpulse-config
-    behavior: merge
-    literals:
-      - ASPNETCORE_ENVIRONMENT=Staging
 
 # Environment-specific image tags
 images:
-  - name: retailpulse-cloud
+  - name: REGISTRY_URL/retailpulse-cloud
     newName: retailpulse-cloudcontainerregistry.azurecr.io/retailpulse-cloud
     newTag: staging
-  - name: retailpulse-edge
+  - name: REGISTRY_URL/retailpulse-edge
     newName: retailpulse-cloudcontainerregistry.azurecr.io/retailpulse-edge
     newTag: staging
 
 # Common labels
-commonLabels:
-  environment: staging
-  version: v1
+labels:
+  - pairs:
+      environment: staging
+      version: v1
 
 # Patches for staging environment
 patches:
+  # Staging runtime settings
+  - target:
+      kind: ConfigMap
+      name: retailpulse-config
+    patch: |-
+      - op: replace
+        path: /data/ASPNETCORE_ENVIRONMENT
+        value: Staging
   # Standard replicas for staging
   - target:
       kind: HorizontalPodAutoscaler

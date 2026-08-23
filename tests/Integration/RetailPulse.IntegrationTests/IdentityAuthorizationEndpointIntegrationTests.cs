@@ -1,4 +1,5 @@
 using System.Net;
+using System.Text.Json;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
@@ -114,6 +115,86 @@ public sealed class IdentityAuthorizationEndpointIntegrationTests : IClassFixtur
         deviceRequest.Headers.Add("X-RetailPulse-Command-Id", "register-device-2");
         var device = await cloudClient.SendAsync(deviceRequest);
         Assert.Equal(HttpStatusCode.Forbidden, device.StatusCode);
+    }
+
+    [Fact]
+    public async Task Cloud_sales_report_requires_manager_or_owner_and_filters_store_scope()
+    {
+        using var managerRequest = CloudRequest(
+            "/api/v1/tenants/tenant-1/stores/store-1/reports/sales?from=2026-08-23T00:00:00Z&to=2026-08-24T00:00:00Z&timezone=UTC&currency=USD",
+            HttpMethod.Get,
+            tokenId: "manager-report-token",
+            subjectId: "manager-1",
+            tenantId: "tenant-1",
+            storeId: "store-1",
+            principalType: "User",
+            roles: "Manager",
+            issuedAt: DateTimeOffset.UtcNow.AddMinutes(-5),
+            expiresAt: DateTimeOffset.UtcNow.AddMinutes(30));
+        var manager = await cloudClient.SendAsync(managerRequest);
+
+        Assert.Equal(HttpStatusCode.OK, manager.StatusCode);
+        await using var stream = await manager.Content.ReadAsStreamAsync();
+        using var document = await JsonDocument.ParseAsync(stream);
+        var summary = document.RootElement.GetProperty("summary");
+        Assert.Equal("tenant-1", summary.GetProperty("tenantId").GetString());
+        Assert.Equal("store-1", summary.GetProperty("storeId").GetString());
+        Assert.Equal(5750, summary.GetProperty("netSalesMinor").GetInt64());
+        Assert.Equal(3, summary.GetProperty("orderCount").GetInt32());
+        Assert.Equal(1, summary.GetProperty("freshness").GetProperty("duplicateEventCount").GetInt32());
+        Assert.Equal("simulated-events", summary.GetProperty("freshness").GetProperty("dataSource").GetString());
+        var responseBody = document.RootElement.GetRawText();
+        Assert.DoesNotContain("paymentReference", responseBody, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("card", responseBody, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("pan", responseBody, StringComparison.OrdinalIgnoreCase);
+
+        using var cashierRequest = CloudRequest(
+            "/api/v1/tenants/tenant-1/stores/store-1/reports/sales",
+            HttpMethod.Get,
+            tokenId: "cashier-report-token",
+            subjectId: "cashier-1",
+            tenantId: "tenant-1",
+            storeId: "store-1",
+            principalType: "User",
+            roles: "Cashier",
+            issuedAt: DateTimeOffset.UtcNow.AddMinutes(-5),
+            expiresAt: DateTimeOffset.UtcNow.AddMinutes(30));
+        var cashier = await cloudClient.SendAsync(cashierRequest);
+        Assert.Equal(HttpStatusCode.Forbidden, cashier.StatusCode);
+
+        using var wrongStoreRequest = CloudRequest(
+            "/api/v1/tenants/tenant-1/stores/store-2/reports/sales",
+            HttpMethod.Get,
+            tokenId: "manager-wrong-store-token",
+            subjectId: "manager-1",
+            tenantId: "tenant-1",
+            storeId: "store-1",
+            principalType: "User",
+            roles: "Manager",
+            issuedAt: DateTimeOffset.UtcNow.AddMinutes(-5),
+            expiresAt: DateTimeOffset.UtcNow.AddMinutes(30));
+        var wrongStore = await cloudClient.SendAsync(wrongStoreRequest);
+        Assert.Equal(HttpStatusCode.Forbidden, wrongStore.StatusCode);
+    }
+
+    [Fact]
+    public async Task Cloud_sales_report_rejects_invalid_time_range()
+    {
+        using var request = CloudRequest(
+            "/api/v1/tenants/tenant-1/stores/store-1/reports/sales?from=2026-08-24T00:00:00Z&to=2026-08-23T00:00:00Z",
+            HttpMethod.Get,
+            tokenId: "manager-report-token",
+            subjectId: "manager-1",
+            tenantId: "tenant-1",
+            storeId: "store-1",
+            principalType: "User",
+            roles: "Manager",
+            issuedAt: DateTimeOffset.UtcNow.AddMinutes(-5),
+            expiresAt: DateTimeOffset.UtcNow.AddMinutes(30));
+
+        var result = await cloudClient.SendAsync(request);
+
+        Assert.Equal(HttpStatusCode.BadRequest, result.StatusCode);
     }
 
     [Fact]
@@ -350,6 +431,7 @@ public sealed class IdentityAuthorizationEndpointIntegrationTests : IClassFixtur
 
     private static HttpRequestMessage CloudRequest(
         string path,
+        HttpMethod? method,
         string tokenId,
         string subjectId,
         string tenantId,
@@ -359,7 +441,7 @@ public sealed class IdentityAuthorizationEndpointIntegrationTests : IClassFixtur
         DateTimeOffset issuedAt,
         DateTimeOffset expiresAt)
     {
-        var request = new HttpRequestMessage(HttpMethod.Post, path);
+        var request = new HttpRequestMessage(method ?? HttpMethod.Post, path);
         request.Headers.Add("X-RetailPulse-Token-Id", tokenId);
         request.Headers.Add("X-RetailPulse-Subject-Id", subjectId);
         request.Headers.Add("X-RetailPulse-Tenant-Id", tenantId);
@@ -374,6 +456,18 @@ public sealed class IdentityAuthorizationEndpointIntegrationTests : IClassFixtur
         request.Headers.Add("X-RetailPulse-Expires-At", expiresAt.ToString("O"));
         return request;
     }
+
+    private static HttpRequestMessage CloudRequest(
+        string path,
+        string tokenId,
+        string subjectId,
+        string tenantId,
+        string? storeId,
+        string principalType,
+        string roles,
+        DateTimeOffset issuedAt,
+        DateTimeOffset expiresAt) =>
+        CloudRequest(path, null, tokenId, subjectId, tenantId, storeId, principalType, roles, issuedAt, expiresAt);
 
     private static HttpRequestMessage EdgeRequest(
         string path,

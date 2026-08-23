@@ -6,6 +6,7 @@ public enum IdentityRole { Cashier, Manager, Owner, Device }
 public enum AuthorizationAction
 {
     ReadStoreData,
+    ViewReports,
     ExecuteCheckout,
     AdjustInventory,
     ConfigureStore,
@@ -109,6 +110,7 @@ public static class IdentityAuthorizationPolicy
     private static HashSet<IdentityRole> RequiredRolesFor(AuthorizationAction action) => action switch
     {
         AuthorizationAction.ReadStoreData => [IdentityRole.Cashier, IdentityRole.Manager, IdentityRole.Device],
+        AuthorizationAction.ViewReports => [IdentityRole.Manager],
         AuthorizationAction.ExecuteCheckout => [IdentityRole.Cashier, IdentityRole.Manager, IdentityRole.Device],
         AuthorizationAction.AdjustInventory => [IdentityRole.Manager],
         AuthorizationAction.ConfigureStore => [IdentityRole.Manager],

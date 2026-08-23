@@ -46,6 +46,26 @@ public class IdentityAuthorizationTests
     }
 
     [Fact]
+    public void Manager_can_view_reports_but_cashier_cannot()
+    {
+        var manager = UserToken([IdentityRole.Manager], tenantId: "tenant-1", storeId: "store-1");
+        var cashier = UserToken([IdentityRole.Cashier], tenantId: "tenant-1", storeId: "store-1");
+
+        var managerDecision = IdentityAuthorizationPolicy.Evaluate(
+            manager,
+            new AuthorizationRequest(new("tenant-1", "store-1"), AuthorizationAction.ViewReports),
+            DateTimeOffset.Parse("2026-08-23T10:00:00Z"));
+        var cashierDecision = IdentityAuthorizationPolicy.Evaluate(
+            cashier,
+            new AuthorizationRequest(new("tenant-1", "store-1"), AuthorizationAction.ViewReports),
+            DateTimeOffset.Parse("2026-08-23T10:00:00Z"));
+
+        Assert.True(managerDecision.Allowed);
+        Assert.False(cashierDecision.Allowed);
+        Assert.Equal(AuthorizationFailure.MissingRole, cashierDecision.Failure);
+    }
+
+    [Fact]
     public void Owner_cannot_access_other_tenant()
     {
         var token = UserToken([IdentityRole.Owner], tenantId: "tenant-1", storeId: null);

@@ -2,11 +2,14 @@
 
 ## APIs and commands
 
-- Queries: `GET /api/v1/reports/sales`, `/inventory`, `/refunds`, and `/sync-health` accept authorized store scope, time range, timezone, currency, freshness, and pagination.
+- MVP simulated query: `GET /api/v1/tenants/{tenantId}/stores/{storeId}/reports/sales` accepts `from`, `to`, `timezone`, and `currency` query parameters and returns sales summary, hourly sales, top products, freshness, and report schema version.
+- Planned queries: `GET /api/v1/reports/sales`, `/inventory`, `/refunds`, and `/sync-health` accept authorized store scope, time range, timezone, currency, freshness, and pagination.
 - Commands: `POST /api/v1/analytics/reprocess` and correction commands require owner/operator authorization, reason, scope, and idempotency key.
 - Authentication and authorization: server-side tenant/store row-level policy; exports require explicit permission and audit.
 - Idempotency behavior: event ingestion deduplicates event ID plus source/version; reprocessing uses job ID and deterministic partition replacement.
 - Error model: stable invalid-range, forbidden, stale/partial, unsupported-currency, schema, throttled, and unavailable codes.
+
+The MVP simulated provider deduplicates by source event ID and reports duplicate counts in freshness metadata. It does not persist facts or consume Service Bus/ADLS yet.
 
 ## Events
 

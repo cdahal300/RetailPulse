@@ -3,7 +3,7 @@ kind: Kustomization
 
 namespace: retailpulse
 
-bases:
+resources:
   - ../../base
 
 # Replicas for dev environment
@@ -13,30 +13,34 @@ replicas:
   - name: edge-api
     count: 1
 
-# Environment-specific ConfigMap values
-configMapGenerator:
-  - name: retailpulse-config
-    behavior: merge
-    literals:
-      - ASPNETCORE_ENVIRONMENT=Development
-      - ASPNETCORE_URLS=http://+:5000
-
 # Environment-specific image tags (for dev, use 'dev' tag)
 images:
-  - name: retailpulse-cloud
+  - name: REGISTRY_URL/retailpulse-cloud
     newName: retailpulse-cloudcontainerregistry.azurecr.io/retailpulse-cloud
     newTag: dev
-  - name: retailpulse-edge
+  - name: REGISTRY_URL/retailpulse-edge
     newName: retailpulse-cloudcontainerregistry.azurecr.io/retailpulse-edge
     newTag: dev
 
 # Common labels
-commonLabels:
-  environment: dev
-  version: v1
+labels:
+  - pairs:
+      environment: dev
+      version: v1
 
 # Patches for dev environment
 patches:
+  # Development runtime settings
+  - target:
+      kind: ConfigMap
+      name: retailpulse-config
+    patch: |-
+      - op: replace
+        path: /data/ASPNETCORE_ENVIRONMENT
+        value: Development
+      - op: replace
+        path: /data/ASPNETCORE_URLS
+        value: http://+:5000
   # Reduce replicas for development
   - target:
       kind: HorizontalPodAutoscaler

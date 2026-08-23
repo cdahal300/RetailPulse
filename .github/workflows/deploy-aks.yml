@@ -7,30 +7,312 @@ on:
         description: Target environment
         required: true
         type: choice
-        options: [development, staging, production]
-      image:
-        description: Immutable container image or digest to deploy
+        options: [dev, staging, production]
+      deployInfrastructure:
+        description: Run Bicep deployment before application rollout
         required: true
+        type: boolean
+        default: false
+      runSmokeTests:
+        description: Run health endpoint smoke tests after rollout
+        required: true
+        type: boolean
+        default: true
+      imageTag:
+        description: Optional image tag; defaults to the commit SHA
+        required: false
         type: string
 
 permissions:
   contents: read
   id-token: write
 
+concurrency:
+  group: aks-${{ inputs.environment }}
+  cancel-in-progress: false
+
+env:
+  DOTNET_VERSION: 10.0.x
+  CLOUD_IMAGE_NAME: retailpulse-cloud
+  EDGE_IMAGE_NAME: retailpulse-edge
+
 jobs:
-  deploy:
-    name: Deploy approved image
+  build:
+    name: Build, publish, and scan images
     runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    outputs:
+      overlay: ${{ steps.context.outputs.overlay }}
+      image_tag: ${{ steps.context.outputs.image_tag }}
+      cloud_image: ${{ steps.cloud.outputs.image }}
+      cloud_digest: ${{ steps.cloud-build.outputs.digest }}
+      edge_image: ${{ steps.edge.outputs.image }}
+      edge_digest: ${{ steps.edge-build.outputs.digest }}
+    steps:
+      - uses: actions/checkout@v5
+      - name: Resolve deployment context
+        id: context
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          case "${{ inputs.environment }}" in
+            dev)
+              overlay="dev"
+              ;;
+            staging)
+              overlay="staging"
+              ;;
+            production)
+              overlay="prod"
+              if [[ "${GITHUB_REF_NAME}" != "main" ]]; then
+                echo "Production deployments must run from main."
+                exit 1
+              fi
+              ;;
+            *)
+              echo "Unsupported environment: ${{ inputs.environment }}"
+              exit 1
+              ;;
+          esac
+
+          image_tag="${{ inputs.imageTag }}"
+          if [[ -z "$image_tag" ]]; then
+            image_tag="${GITHUB_SHA}"
+          fi
+
+          echo "overlay=$overlay" >> "$GITHUB_OUTPUT"
+          echo "image_tag=$image_tag" >> "$GITHUB_OUTPUT"
+      - name: Validate required environment variables
+        shell: bash
+        env:
+          ACR_LOGIN_SERVER: ${{ vars.ACR_LOGIN_SERVER }}
+          AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+          AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+          AZURE_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+        run: |
+          set -euo pipefail
+          for name in ACR_LOGIN_SERVER AZURE_CLIENT_ID AZURE_TENANT_ID AZURE_SUBSCRIPTION_ID; do
+            if [[ -z "${!name}" ]]; then
+              echo "Missing GitHub environment variable: ${name}"
+              exit 1
+            fi
+          done
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      - uses: docker/setup-buildx-action@v3
+      - name: Log in to Azure Container Registry
+        shell: bash
+        env:
+          ACR_LOGIN_SERVER: ${{ vars.ACR_LOGIN_SERVER }}
+        run: |
+          set -euo pipefail
+          az acr login --name "${ACR_LOGIN_SERVER%%.azurecr.io}"
+      - name: Resolve Cloud image name
+        id: cloud
+        shell: bash
+        env:
+          ACR_LOGIN_SERVER: ${{ vars.ACR_LOGIN_SERVER }}
+        run: echo "image=${ACR_LOGIN_SERVER}/${CLOUD_IMAGE_NAME}" >> "$GITHUB_OUTPUT"
+      - name: Build and push Cloud API image
+        id: cloud-build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: src/Cloud/RetailPulse.Cloud/Dockerfile
+          push: true
+          tags: |
+            ${{ steps.cloud.outputs.image }}:${{ steps.context.outputs.image_tag }}
+          labels: |
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.source=${{ github.repositoryUrl }}
+      - name: Scan Cloud API image
+        uses: aquasecurity/trivy-action@0.24.0
+        with:
+          image-ref: ${{ steps.cloud.outputs.image }}@${{ steps.cloud-build.outputs.digest }}
+          format: table
+          exit-code: 1
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+      - name: Resolve Edge image name
+        id: edge
+        shell: bash
+        env:
+          ACR_LOGIN_SERVER: ${{ vars.ACR_LOGIN_SERVER }}
+        run: echo "image=${ACR_LOGIN_SERVER}/${EDGE_IMAGE_NAME}" >> "$GITHUB_OUTPUT"
+      - name: Build and push Edge API image
+        id: edge-build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: src/Edge/RetailPulse.Edge/Dockerfile
+          push: true
+          tags: |
+            ${{ steps.edge.outputs.image }}:${{ steps.context.outputs.image_tag }}
+          labels: |
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.source=${{ github.repositoryUrl }}
+      - name: Scan Edge API image
+        uses: aquasecurity/trivy-action@0.24.0
+        with:
+          image-ref: ${{ steps.edge.outputs.image }}@${{ steps.edge-build.outputs.digest }}
+          format: table
+          exit-code: 1
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+
+  deploy:
+    name: Deploy approved images
+    runs-on: ubuntu-latest
+    needs: build
     environment: ${{ inputs.environment }}
     steps:
       - uses: actions/checkout@v5
-      - name: Validate deployment scaffold
+      - uses: azure/setup-kubectl@v4
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      - name: Validate deployment configuration
+        shell: bash
+        env:
+          AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+          AKS_CLUSTER_NAME: ${{ vars.AKS_CLUSTER_NAME }}
+          POSTGRES_CONNECTION_STRING: ${{ secrets.POSTGRES_CONNECTION_STRING }}
+        run: |
+          set -euo pipefail
+          for name in AZURE_RESOURCE_GROUP AKS_CLUSTER_NAME POSTGRES_CONNECTION_STRING; do
+            if [[ -z "${!name}" ]]; then
+              echo "Missing GitHub environment setting: ${name}"
+              exit 1
+            fi
+          done
+      - name: Optional infrastructure deployment
+        if: ${{ inputs.deployInfrastructure }}
+        shell: bash
+        env:
+          AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+          AZURE_LOCATION: ${{ vars.AZURE_LOCATION }}
+          OWNER_TAG: ${{ vars.OWNER_TAG }}
+          POSTGRES_ADMIN_PASSWORD: ${{ secrets.POSTGRES_ADMIN_PASSWORD }}
+        run: |
+          set -euo pipefail
+          for name in AZURE_LOCATION OWNER_TAG POSTGRES_ADMIN_PASSWORD; do
+            if [[ -z "${!name}" ]]; then
+              echo "Missing GitHub environment setting: ${name}"
+              exit 1
+            fi
+          done
+          ./scripts/azure/deploy-infra.sh \
+            "${{ vars.AZURE_SUBSCRIPTION_ID }}" \
+            "$AZURE_RESOURCE_GROUP" \
+            "$AZURE_LOCATION" \
+            "${{ needs.build.outputs.overlay }}" \
+            "$OWNER_TAG" \
+            "$POSTGRES_ADMIN_PASSWORD"
+      - name: Configure AKS credentials
+        shell: bash
+        env:
+          AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+          AKS_CLUSTER_NAME: ${{ vars.AKS_CLUSTER_NAME }}
+        run: |
+          set -euo pipefail
+          export KUBECONFIG="$RUNNER_TEMP/retailpulse-kubeconfig"
+          echo "KUBECONFIG=$KUBECONFIG" >> "$GITHUB_ENV"
+          az aks get-credentials \
+            --resource-group "$AZURE_RESOURCE_GROUP" \
+            --name "$AKS_CLUSTER_NAME" \
+            --file "$KUBECONFIG" \
+            --overwrite-existing
+      - name: Apply runtime secrets
+        shell: bash
+        env:
+          POSTGRES_CONNECTION_STRING: ${{ secrets.POSTGRES_CONNECTION_STRING }}
+          REDIS_CONNECTION_STRING: ${{ secrets.REDIS_CONNECTION_STRING }}
+        run: |
+          set -euo pipefail
+          kubectl create namespace retailpulse --dry-run=client -o yaml | kubectl apply -f -
+          kubectl create secret generic retailpulse-secrets -n retailpulse \
+            --from-literal=ConnectionStrings__Postgres="$POSTGRES_CONNECTION_STRING" \
+            --from-literal=ConnectionStrings__Redis="${REDIS_CONNECTION_STRING:-}" \
+            --dry-run=client -o yaml | kubectl apply -f -
+      - name: Deploy Kubernetes manifests by digest
+        shell: bash
+        env:
+          CLOUD_IMAGE: ${{ needs.build.outputs.cloud_image }}@${{ needs.build.outputs.cloud_digest }}
+          EDGE_IMAGE: ${{ needs.build.outputs.edge_image }}@${{ needs.build.outputs.edge_digest }}
+          OVERLAY: ${{ needs.build.outputs.overlay }}
+        run: |
+          set -euo pipefail
+          work_dir="$RUNNER_TEMP/kubernetes"
+          rendered="$RUNNER_TEMP/retailpulse-${OVERLAY}.yaml"
+          rm -rf "$work_dir"
+          cp -R infra/kubernetes "$work_dir"
+          overlay_file="$work_dir/overlays/${OVERLAY}/kustomization.yaml"
+          awk '
+            /^images:/ { skip = 1; next }
+            skip && /^[[:alpha:]_][[:alnum:]_-]*:/ { skip = 0 }
+            !skip { print }
+          ' "$overlay_file" > "${overlay_file}.tmp"
+          mv "${overlay_file}.tmp" "$overlay_file"
+          cat >> "$overlay_file" <<EOF
+          images:
+            - name: REGISTRY_URL/retailpulse-cloud
+              newName: ${CLOUD_IMAGE%@*}
+              digest: ${CLOUD_IMAGE#*@}
+            - name: REGISTRY_URL/retailpulse-edge
+              newName: ${EDGE_IMAGE%@*}
+              digest: ${EDGE_IMAGE#*@}
+          EOF
+          kubectl kustomize "$work_dir/overlays/${OVERLAY}" > "$rendered"
+          kubectl apply -f "$rendered"
+          kubectl annotate deployment/cloud-api -n retailpulse \
+            retailpulse.com/commit-sha="${GITHUB_SHA}" \
+            retailpulse.com/image-digest="${{ needs.build.outputs.cloud_digest }}" \
+            --overwrite
+          kubectl annotate deployment/edge-api -n retailpulse \
+            retailpulse.com/commit-sha="${GITHUB_SHA}" \
+            retailpulse.com/image-digest="${{ needs.build.outputs.edge_digest }}" \
+            --overwrite
+      - name: Verify rollout
         shell: bash
         run: |
-          test -d infra/environments || { echo "Missing infra/environments"; exit 1; }
-          test -d infra/modules || { echo "Missing infra/modules"; exit 1; }
-          test -d deploy || { echo "Missing deploy manifests or Helm chart"; exit 1; }
-          echo "Deployment manifests are present. Add Azure login, ACR pull, and AKS rollout steps in FEAT-007."
+          set -euo pipefail
+          kubectl rollout status deployment/cloud-api -n retailpulse --timeout=5m
+          kubectl rollout status deployment/edge-api -n retailpulse --timeout=5m
+      - name: Smoke test health endpoints
+        if: ${{ inputs.runSmokeTests }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          kubectl port-forward -n retailpulse svc/cloud-api 5000:5000 > "$RUNNER_TEMP/cloud-port-forward.log" 2>&1 &
+          cloud_pid=$!
+          trap 'kill "$cloud_pid" 2>/dev/null || true' EXIT
+          for attempt in {1..30}; do
+            if curl -fsS http://127.0.0.1:5000/health/live && curl -fsS http://127.0.0.1:5000/health/ready; then
+              exit 0
+            fi
+            sleep 2
+          done
+          cat "$RUNNER_TEMP/cloud-port-forward.log"
           exit 1
-      # Add Azure federated login, ACR image verification, and Helm/kubectl rollout
-      # only after FEAT-006 infrastructure and deploy manifests are implemented.
+      - name: Rollback guidance
+        if: failure()
+        shell: bash
+        run: |
+          cat <<'ROLLBACK'
+          Deployment failed. Stop promotion and redeploy the previous known-good image digest, for example:
+            kubectl set image deployment/cloud-api cloud-api=<previous-cloud-image-digest> -n retailpulse
+            kubectl set image deployment/edge-api edge-api=<previous-edge-image-digest> -n retailpulse
+            kubectl rollout status deployment/cloud-api -n retailpulse --timeout=5m
+            kubectl rollout status deployment/edge-api -n retailpulse --timeout=5m
+          Keep feature-flag activation separate from deployment rollback.
+          ROLLBACK
+      - name: Remove temporary kubeconfig
+        if: always()
+        shell: bash
+        run: rm -f "${KUBECONFIG:-}"

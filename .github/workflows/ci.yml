@@ -9,6 +9,34 @@ permissions:
   contents: read
 
 jobs:
+  infra:
+    name: IaC and manifest validation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: azure/setup-kubectl@v4
+      - name: Build Bicep template
+        uses: azure/cli@v2
+        with:
+          inlineScript: |
+            az bicep build --file infra/environments/main.bicep
+      - name: Render Kubernetes overlays
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/kustomize"
+          for overlay in dev staging prod; do
+            kubectl kustomize "infra/kubernetes/overlays/${overlay}" > "$RUNNER_TEMP/kustomize/${overlay}.yaml"
+          done
+      - name: Check manifests do not contain inline secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          if grep -R "kind: Secret\|Password=CHANGEME" infra/kubernetes "$RUNNER_TEMP/kustomize"; then
+            echo "Kubernetes manifests must not contain inline secrets or placeholder passwords."
+            exit 1
+          fi
+
   dotnet:
     name: .NET build and test
     runs-on: ubuntu-latest

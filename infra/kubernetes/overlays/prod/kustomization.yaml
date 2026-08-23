@@ -3,32 +3,36 @@ kind: Kustomization
 
 namespace: retailpulse
 
-bases:
+resources:
   - ../../base
-
-# Environment-specific ConfigMap values
-configMapGenerator:
-  - name: retailpulse-config
-    behavior: merge
-    literals:
-      - ASPNETCORE_ENVIRONMENT=Production
+  - pod-disruption-budget.yaml
+  - network-policy-strict.yaml
 
 # Environment-specific image tags
 images:
-  - name: retailpulse-cloud
+  - name: REGISTRY_URL/retailpulse-cloud
     newName: retailpulse-cloudcontainerregistry.azurecr.io/retailpulse-cloud
     newTag: prod  # Must be a specific version, never 'latest'
-  - name: retailpulse-edge
+  - name: REGISTRY_URL/retailpulse-edge
     newName: retailpulse-cloudcontainerregistry.azurecr.io/retailpulse-edge
     newTag: prod
 
 # Common labels
-commonLabels:
-  environment: prod
-  version: v1
+labels:
+  - pairs:
+      environment: prod
+      version: v1
 
 # Patches for production environment
 patches:
+  # Production runtime settings
+  - target:
+      kind: ConfigMap
+      name: retailpulse-config
+    patch: |-
+      - op: replace
+        path: /data/ASPNETCORE_ENVIRONMENT
+        value: Production
   # Production replicas and autoscaling
   - target:
       kind: HorizontalPodAutoscaler
@@ -89,23 +93,3 @@ patches:
       - op: replace
         path: /spec/template/spec/containers/0/resources/limits/memory
         value: "1Gi"
-  # Production pod disruption budgets
-  - target:
-      kind: Deployment
-      name: cloud-api
-    patch: |-
-      - op: add
-        path: /spec/template/metadata/annotations/podDisruptionBudget
-        value: "minAvailable: 2"
-  - target:
-      kind: Deployment
-      name: edge-api
-    patch: |-
-      - op: add
-        path: /spec/template/metadata/annotations/podDisruptionBudget
-        value: "minAvailable: 2"
-
-# Production-specific resources
-resources:
-  - pod-disruption-budget.yaml
-  - network-policy-strict.yaml

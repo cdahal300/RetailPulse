@@ -48,7 +48,7 @@ The repository contains the architecture baseline, complete feature planning pac
 | .NET solution and PWA scaffold | Buildable |
 | Local checkout domain | Implemented with test doubles |
 | SQLite persistence | Planned: FEAT-002 |
-| Azure/AKS infrastructure | Planned: FEAT-006 |
+| Azure/AKS infrastructure | Deferred for sponsorship-compatible deployment |
 | GitHub CI | Configured |
 | AKS CD | Gated until infrastructure manifests exist |
 | Analytics and AI | Planned: FEAT-010 and FEAT-013 |
@@ -70,9 +70,19 @@ The product serves multiple independent retail businesses. Tenant and store isol
 ## Start here
 
 1. Open the repository in VS Code and choose **Dev Containers: Reopen in Container**.
-2. Read the [MVP scope](docs/product/MVP-scope.md) and [feature roadmap](docs/features/ROADMAP.md).
-3. Review the [branching strategy](docs/planning/branching-strategy.md).
-4. Start implementation with [FEAT-002 Durable SQLite Edge Persistence](docs/features/FEAT-002-sqlite-edge-persistence/README.md).
+2. Wait for the `app`, `postgres`, and `redis` Compose services to become healthy.
+3. Read the [MVP scope](docs/product/MVP-scope.md) and [feature roadmap](docs/features/ROADMAP.md).
+4. Review the [branching strategy](docs/planning/branching-strategy.md).
+5. Start implementation with [FEAT-002 Durable SQLite Edge Persistence](docs/features/FEAT-002-sqlite-edge-persistence/README.md).
+
+The Dev Container is the canonical development environment. It carries the .NET, Node, Azure, Bicep, kubectl, PostgreSQL, and Redis tooling so development is reproducible when the repository is opened on another computer. PostgreSQL and Redis are local Docker services and do not create Azure charges.
+
+Start or inspect the local services from inside the container:
+
+```bash
+docker compose -f .devcontainer/docker-compose.yml up -d postgres redis
+docker compose -f .devcontainer/docker-compose.yml ps
+```
 
 Local build commands:
 

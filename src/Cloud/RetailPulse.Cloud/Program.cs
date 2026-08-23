@@ -8,6 +8,15 @@ builder.Services.AddSingleton<IIdentityRevocationStore, InMemoryIdentityRevocati
 var app = builder.Build();
 app.UseHttpsRedirection();
 
+// Health check endpoints for Kubernetes readiness and liveness probes
+app.MapGet("/health/live", () => Results.Ok(new { status = "alive", timestamp = DateTimeOffset.UtcNow }))
+    .WithName("HealthLive")
+    .AllowAnonymous();
+
+app.MapGet("/health/ready", () => Results.Ok(new { status = "ready", timestamp = DateTimeOffset.UtcNow }))
+    .WithName("HealthReady")
+    .AllowAnonymous();
+
 app.MapGet("/api/v1/me", (HttpRequest request, IIdentityRevocationStore revocations) =>
 {
     if (!TryReadToken(request, out var token))

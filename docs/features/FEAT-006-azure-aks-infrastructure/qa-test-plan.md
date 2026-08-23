@@ -2,6 +2,7 @@
 
 ## Test coverage
 
+- Local MVP checks: open the Dev Container, verify PostgreSQL and Redis Compose health, run the .NET and PWA test/build commands, and confirm no Azure resources are required.
 - Unit tests: IaC module defaults, naming/tagging, policy rules, network rules, identity bindings, and alert thresholds.
 - Integration tests: deploy disposable environments, private endpoint connectivity, Key Vault access, managed identity, Service Bus, PostgreSQL, Blob, and App Configuration.
 - Contract tests: health/readiness probes, ingress/WAF behavior, and infrastructure outputs consumed by deployment pipelines.
@@ -24,6 +25,6 @@
 ## Release evidence
 
 - Test command: infrastructure formatter/validate/plan, policy scanner, image scanner, and deployment pipeline validation commands defined by FEAT-007.
-- Required environment: isolated Azure subscription/resource group or approved ephemeral environment with cost limits.
+- Required MVP environment: the checked-in Dev Container and local Compose services. Azure integration requires an isolated supported subscription/resource group with cost limits.
 - Evidence artifact: plan, policy report, access matrix, connectivity report, restore timings, and Azure Activity Log sample.
-- Known gaps: regional disaster recovery and provider quota limits require scheduled production-like rehearsal.
+- Known gaps: the current sponsorship subscription cannot provision the managed PostgreSQL and ACR resources; Azure integration, regional disaster recovery, and provider quota limits require a supported subscription and scheduled rehearsal.

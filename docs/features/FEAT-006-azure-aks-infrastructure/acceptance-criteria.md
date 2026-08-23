@@ -2,6 +2,7 @@
 
 ## Functional behavior
 
+- Given the current MVP development environment, when the repository is opened in the Dev Container, then PostgreSQL and Redis are available through the checked-in Compose configuration without Azure resources.
 - Given a versioned environment definition, when provisioning runs with approved parameters, then AKS, networking, identity, registry, data, messaging, secrets, and monitoring resources are created consistently.
 - Given a workload deployment, when it uses managed/workload identity, then it can access only its approved Azure resources without embedded credentials.
 - Given a node or pod failure, when health and autoscaling policies apply, then workloads recover within documented availability targets.
@@ -11,6 +12,8 @@
 - Given an IaC plan failure, policy violation, quota issue, or partial apply, then deployment stops safely and exposes a recoverable state without destructive retries.
 - Given an AKS zone, node pool, database, Service Bus, or region incident, then documented backup, failover, degraded-mode, and recovery procedures preserve business data.
 - Given ingress or dependency unavailability, then WAF, health probes, retries, and maintenance behavior prevent unsafe traffic routing.
+
+For the current sponsorship subscription, the managed PostgreSQL and ACR criteria are deferred until a supported Azure service path is approved. Unsupported services must not be replaced with insecure production workarounds.
 
 ## Authorization and isolation
 

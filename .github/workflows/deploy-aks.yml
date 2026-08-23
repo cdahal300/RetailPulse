@@ -130,7 +130,7 @@ jobs:
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.source=${{ github.repositoryUrl }}
       - name: Scan Cloud API image
-        uses: aquasecurity/trivy-action@0.24.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: ${{ steps.cloud.outputs.image }}@${{ steps.cloud-build.outputs.digest }}
           format: table
@@ -156,7 +156,7 @@ jobs:
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.source=${{ github.repositoryUrl }}
       - name: Scan Edge API image
-        uses: aquasecurity/trivy-action@0.24.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: ${{ steps.edge.outputs.image }}@${{ steps.edge-build.outputs.digest }}
           format: table

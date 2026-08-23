@@ -24,7 +24,7 @@ public class OfflineCheckoutIntegrationTests
         await AssertTableCountAsync(database.Path, "inventory_movements", 1);
         await AssertTableCountAsync(database.Path, "receipt_intents", 1);
         await AssertTableCountAsync(database.Path, "outbox_messages", 1);
-        await AssertTableCountAsync(database.Path, "schema_migrations", 1);
+        await AssertTableCountAsync(database.Path, "schema_migrations", 2);
 
         await using var reopened = new SqliteCheckoutPersistence(database.Path);
         Assert.Equal(1, (await reopened.GetHealthAsync()).PendingOutboxCount);

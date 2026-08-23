@@ -7,9 +7,9 @@ namespace RetailPulse.Edge;
 
 public sealed record PersistenceHealth(int SchemaVersion, bool Available, int PendingOutboxCount, string? LastRecoveryError);
 
-public sealed class SqliteCheckoutPersistence : ILocalCheckoutPersistence, IAsyncDisposable
+public sealed class SqliteCheckoutPersistence : ILocalCheckoutPersistence, IOutboxPersistence, IAsyncDisposable
 {
-    public const int CurrentSchemaVersion = 1;
+    public const int CurrentSchemaVersion = 2;
 
     private readonly string connectionString;
     private string? lastRecoveryError;
@@ -78,6 +78,74 @@ public sealed class SqliteCheckoutPersistence : ILocalCheckoutPersistence, IAsyn
             lastRecoveryError = exception.Message;
             return new(0, false, 0, lastRecoveryError);
         }
+    }
+
+    public async Task<IReadOnlyList<OutboxDelivery>> ClaimPendingAsync(TenantStoreScope scope, int maxMessages, DateTimeOffset now, CancellationToken cancellationToken = default)
+    {
+        scope.Validate();
+        if (maxMessages <= 0) throw new ArgumentOutOfRangeException(nameof(maxMessages));
+        await using var connection = await OpenConnectionAsync(cancellationToken);
+        await using var transaction = (SqliteTransaction)await connection.BeginTransactionAsync(cancellationToken);
+        var select = CreateCommand(connection, transaction, "SELECT message_id, message_type, tenant_id, store_id, idempotency_key, occurred_at, schema_version, payload_json, attempt_count, status FROM outbox_messages WHERE tenant_id = $tenant AND store_id = $store AND status IN ('Pending', 'Retry') AND (next_attempt_at IS NULL OR next_attempt_at <= $now) ORDER BY occurred_at LIMIT $limit;");
+        AddScopeParameters(select, scope);
+        select.Parameters.AddWithValue("$now", now.ToString("O", CultureInfo.InvariantCulture));
+        select.Parameters.AddWithValue("$limit", maxMessages);
+        var deliveries = new List<OutboxDelivery>();
+        await using var reader = await select.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            var message = ReadMessage(reader);
+            deliveries.Add(new(message, reader.GetInt32(8), Enum.Parse<OutboxDeliveryState>(reader.GetString(9))));
+        }
+        await reader.CloseAsync();
+        foreach (var delivery in deliveries)
+        {
+            var claim = CreateCommand(connection, transaction, "UPDATE outbox_messages SET status = 'InFlight', last_attempt_at = $now WHERE message_id = $message AND tenant_id = $tenant AND store_id = $store AND status IN ('Pending', 'Retry');");
+            claim.Parameters.AddWithValue("$message", delivery.Message.MessageId);
+            AddScopeParameters(claim, scope);
+            claim.Parameters.AddWithValue("$now", now.ToString("O", CultureInfo.InvariantCulture));
+            await claim.ExecuteNonQueryAsync(cancellationToken);
+        }
+        await transaction.CommitAsync(cancellationToken);
+        return deliveries;
+    }
+
+    public async Task RecordAttemptAsync(string messageId, TenantStoreScope scope, SyncAttempt attempt, CancellationToken cancellationToken = default)
+    {
+        scope.Validate();
+        await using var connection = await OpenConnectionAsync(cancellationToken);
+        await using var transaction = (SqliteTransaction)await connection.BeginTransactionAsync(cancellationToken);
+        var insert = CreateCommand(connection, transaction, "INSERT INTO sync_attempts (message_id, tenant_id, store_id, attempted_at, succeeded, error) SELECT $message, tenant_id, store_id, $attempted, $succeeded, $error FROM outbox_messages WHERE message_id = $message AND tenant_id = $tenant AND store_id = $store;");
+        insert.Parameters.AddWithValue("$message", messageId);
+        AddScopeParameters(insert, scope);
+        insert.Parameters.AddWithValue("$attempted", attempt.AttemptedAt.ToString("O", CultureInfo.InvariantCulture));
+        insert.Parameters.AddWithValue("$succeeded", attempt.Classification is SyncAttemptClassification.Accepted or SyncAttemptClassification.Duplicate ? 1 : 0);
+        insert.Parameters.AddWithValue("$error", (object?)attempt.Error ?? DBNull.Value);
+        if (await insert.ExecuteNonQueryAsync(cancellationToken) != 1) throw new CheckoutValidationException("Outbox message was not found in the requested scope.");
+        var update = CreateCommand(connection, transaction, "UPDATE outbox_messages SET attempt_count = attempt_count + 1, status = $status, last_error = $error, next_attempt_at = $next WHERE message_id = $message AND tenant_id = $tenant AND store_id = $store;");
+        update.Parameters.AddWithValue("$message", messageId);
+        AddScopeParameters(update, scope);
+        update.Parameters.AddWithValue("$status", attempt.RetryAt.HasValue ? OutboxDeliveryState.Retry.ToString() : OutboxDeliveryState.InFlight.ToString());
+        update.Parameters.AddWithValue("$error", (object?)attempt.Error ?? DBNull.Value);
+        update.Parameters.AddWithValue("$next", (object?)attempt.RetryAt?.ToString("O", CultureInfo.InvariantCulture) ?? DBNull.Value);
+        await update.ExecuteNonQueryAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+    }
+
+    public Task MarkSyncedAsync(string messageId, TenantStoreScope scope, DateTimeOffset syncedAt, CancellationToken cancellationToken = default) => UpdateOutboxAsync(messageId, scope, "UPDATE outbox_messages SET status = 'Synced', next_attempt_at = NULL, last_error = NULL WHERE message_id = $message AND tenant_id = $tenant AND store_id = $store;", _ => { }, cancellationToken);
+    public Task MarkForReviewAsync(string messageId, TenantStoreScope scope, string reason, CancellationToken cancellationToken = default) => UpdateOutboxAsync(messageId, scope, "UPDATE outbox_messages SET status = 'Review', next_attempt_at = NULL, last_error = $error WHERE message_id = $message AND tenant_id = $tenant AND store_id = $store;", command => command.Parameters.AddWithValue("$error", reason), cancellationToken);
+    public Task MarkDeadLetterAsync(string messageId, TenantStoreScope scope, string reason, CancellationToken cancellationToken = default) => UpdateOutboxAsync(messageId, scope, "UPDATE outbox_messages SET status = 'DeadLetter', next_attempt_at = NULL, last_error = $error WHERE message_id = $message AND tenant_id = $tenant AND store_id = $store;", command => command.Parameters.AddWithValue("$error", reason), cancellationToken);
+
+    public async Task<SyncHealth> GetSyncHealthAsync(TenantStoreScope scope, CancellationToken cancellationToken = default)
+    {
+        scope.Validate();
+        await using var connection = await OpenConnectionAsync(cancellationToken);
+        var command = connection.CreateCommand();
+        command.CommandText = "SELECT COUNT(CASE WHEN status IN ('Pending', 'Retry', 'InFlight') THEN 1 END), MIN(CASE WHEN status IN ('Pending', 'Retry', 'InFlight') THEN occurred_at END), MAX(CASE WHEN status = 'Synced' THEN last_attempt_at END), COUNT(CASE WHEN status = 'Retry' THEN 1 END), COUNT(CASE WHEN status = 'Review' THEN 1 END), COUNT(CASE WHEN status = 'DeadLetter' THEN 1 END) FROM outbox_messages WHERE tenant_id = $tenant AND store_id = $store;";
+        AddScopeParameters(command, scope);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        await reader.ReadAsync(cancellationToken);
+        return new(reader.GetInt32(0), ParseDate(reader.IsDBNull(1) ? null : reader.GetString(1)), ParseDate(reader.IsDBNull(2) ? null : reader.GetString(2)), reader.GetInt32(3), reader.GetInt32(4), reader.GetInt32(5));
     }
 
     public ValueTask DisposeAsync() => ValueTask.CompletedTask;
@@ -156,6 +224,13 @@ public sealed class SqliteCheckoutPersistence : ILocalCheckoutPersistence, IAsyn
                 INSERT INTO schema_migrations (version, applied_at) VALUES (1, $appliedAt);
                 UPDATE schema_version SET version = 1 WHERE id = 1;
                 """;
+            command.Parameters.AddWithValue("$appliedAt", DateTimeOffset.UtcNow.ToString("O", CultureInfo.InvariantCulture));
+            await command.ExecuteNonQueryAsync(cancellationToken);
+        }
+        if (version < 2)
+        {
+            command.Parameters.Clear();
+            command.CommandText = "ALTER TABLE outbox_messages ADD COLUMN next_attempt_at TEXT; UPDATE schema_migrations SET applied_at = $appliedAt WHERE version = 1; INSERT INTO schema_migrations (version, applied_at) VALUES (2, $appliedAt); UPDATE schema_version SET version = 2 WHERE id = 1;";
             command.Parameters.AddWithValue("$appliedAt", DateTimeOffset.UtcNow.ToString("O", CultureInfo.InvariantCulture));
             await command.ExecuteNonQueryAsync(cancellationToken);
         }
@@ -274,10 +349,32 @@ public sealed class SqliteCheckoutPersistence : ILocalCheckoutPersistence, IAsyn
         return command;
     }
 
+    private async Task UpdateOutboxAsync(string messageId, TenantStoreScope scope, string sql, Action<SqliteCommand> addParameters, CancellationToken cancellationToken)
+    {
+        scope.Validate();
+        await using var connection = await OpenConnectionAsync(cancellationToken);
+        await using var transaction = (SqliteTransaction)await connection.BeginTransactionAsync(cancellationToken);
+        var command = CreateCommand(connection, transaction, sql);
+        command.Parameters.AddWithValue("$message", messageId);
+        AddScopeParameters(command, scope);
+        addParameters(command);
+        if (await command.ExecuteNonQueryAsync(cancellationToken) != 1) throw new CheckoutValidationException("Outbox message was not found in the requested scope.");
+        await transaction.CommitAsync(cancellationToken);
+    }
+
+    private static OutboxMessage ReadMessage(SqliteDataReader reader) => new(reader.GetString(0), reader.GetString(1), reader.GetString(2), reader.GetString(3), reader.GetString(4), DateTimeOffset.Parse(reader.GetString(5), CultureInfo.InvariantCulture), reader.GetInt32(6), JsonSerializer.Deserialize<SaleCompletedEvent>(reader.GetString(7)) ?? throw new InvalidDataException("Outbox payload is invalid."));
+    private static DateTimeOffset? ParseDate(string? value) => value is null ? null : DateTimeOffset.Parse(value, CultureInfo.InvariantCulture);
+
     private static void AddScopeParameters(SqliteCommand command, Sale sale)
     {
         command.Parameters.AddWithValue("$tenant", sale.TenantId);
         command.Parameters.AddWithValue("$store", sale.StoreId);
+    }
+
+    private static void AddScopeParameters(SqliteCommand command, TenantStoreScope scope)
+    {
+        command.Parameters.AddWithValue("$tenant", scope.TenantId);
+        command.Parameters.AddWithValue("$store", scope.StoreId);
     }
 
     private static void ValidateScope(CheckoutCommit commit)

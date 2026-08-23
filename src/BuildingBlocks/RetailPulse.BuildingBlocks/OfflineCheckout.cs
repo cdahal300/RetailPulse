@@ -115,6 +115,70 @@ public interface ILocalCheckoutPersistence
     Task CommitAsync(CheckoutCommit commit, CancellationToken cancellationToken = default);
 }
 
+public readonly record struct TenantStoreScope(string TenantId, string StoreId)
+{
+    public void Validate()
+    {
+        if (string.IsNullOrWhiteSpace(TenantId) || string.IsNullOrWhiteSpace(StoreId))
+        {
+            throw new CheckoutValidationException("Tenant and store scope are required.");
+        }
+    }
+}
+
+public enum OutboxDeliveryState { Pending, InFlight, Retry, Synced, Review, DeadLetter }
+public enum SyncAttemptClassification { Accepted, Duplicate, TransientFailure, Unauthorized, InvalidPayload, Conflict, Reviewable }
+public enum SyncSubmissionOutcome { Accepted, Duplicate, Rejected, Reviewable }
+
+public sealed record OutboxDelivery(OutboxMessage Message, int AttemptCount, OutboxDeliveryState State);
+public sealed record SyncAttempt(DateTimeOffset AttemptedAt, SyncAttemptClassification Classification, string? Error = null, DateTimeOffset? RetryAt = null);
+public sealed record SyncSubmissionResult(SyncSubmissionOutcome Outcome, SyncAttemptClassification Classification, string? Error = null)
+{
+    public bool IsSuccess => Outcome is SyncSubmissionOutcome.Accepted or SyncSubmissionOutcome.Duplicate;
+}
+
+public sealed record SyncRetryPolicy(int MaxAttempts = 5, TimeSpan? BaseDelay = null, TimeSpan? MaxDelay = null)
+{
+    public TimeSpan GetDelay(int attemptNumber)
+    {
+        if (attemptNumber < 1) throw new ArgumentOutOfRangeException(nameof(attemptNumber));
+        var baseDelay = BaseDelay ?? TimeSpan.FromSeconds(5);
+        var maxDelay = MaxDelay ?? TimeSpan.FromMinutes(5);
+        var seconds = Math.Min(maxDelay.TotalSeconds, baseDelay.TotalSeconds * Math.Pow(2, attemptNumber - 1));
+        return TimeSpan.FromSeconds(seconds);
+    }
+
+    public bool CanRetry(int attemptNumber, SyncAttemptClassification classification) =>
+        attemptNumber < MaxAttempts && classification == SyncAttemptClassification.TransientFailure;
+}
+
+public sealed record SyncHealth(int PendingCount, DateTimeOffset? OldestPendingAt, DateTimeOffset? LastSuccessAt, int RetryCount, int ConflictCount, int DeadLetterCount);
+
+public interface IOutboxPersistence
+{
+    Task<IReadOnlyList<OutboxDelivery>> ClaimPendingAsync(TenantStoreScope scope, int maxMessages, DateTimeOffset now, CancellationToken cancellationToken = default);
+    Task RecordAttemptAsync(string messageId, TenantStoreScope scope, SyncAttempt attempt, CancellationToken cancellationToken = default);
+    Task MarkSyncedAsync(string messageId, TenantStoreScope scope, DateTimeOffset syncedAt, CancellationToken cancellationToken = default);
+    Task MarkForReviewAsync(string messageId, TenantStoreScope scope, string reason, CancellationToken cancellationToken = default);
+    Task MarkDeadLetterAsync(string messageId, TenantStoreScope scope, string reason, CancellationToken cancellationToken = default);
+    Task<SyncHealth> GetSyncHealthAsync(TenantStoreScope scope, CancellationToken cancellationToken = default);
+}
+
+public interface ISyncSubmissionClient
+{
+    Task<SyncSubmissionResult> SubmitAsync(OutboxMessage message, CancellationToken cancellationToken = default);
+}
+
+public interface ISyncAuthorization
+{
+    bool IsAuthorized(TenantStoreScope scope, string terminalId);
+}
+
+public interface ICloudSyncHandler
+{
+    Task<SyncSubmissionResult> SubmitAsync(OutboxMessage message, TenantStoreScope authenticatedScope, string terminalId, CancellationToken cancellationToken = default);
+}
+
 public interface ISyncTransport
 {
     Task SendAsync(OutboxMessage message, CancellationToken cancellationToken = default);

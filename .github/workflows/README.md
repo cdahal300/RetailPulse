@@ -23,3 +23,17 @@ Configure these GitHub environment secrets:
 - `POSTGRES_ADMIN_PASSWORD`: PostgreSQL admin password used only when optional infrastructure deployment is enabled.
 - `POSTGRES_CONNECTION_STRING`: Runtime PostgreSQL connection string for the application.
 - `REDIS_CONNECTION_STRING`: Optional runtime Redis connection string for the application when Redis is enabled.
+
+## Dev Deployment
+
+The current dev environment is deployed through `deploy-aks.yml` with these settings:
+
+- GitHub environment: `dev`
+- Azure resource group: `rg-retailpulse-dev-centralus`
+- AKS cluster: `retailpulse-dev-aks`
+- ACR login server: `retailpulsedevzhztnpacr.azurecr.io`
+- Region: `centralus`
+- Infrastructure input: `deployInfrastructure=false` after initial provisioning
+- Smoke test input: `runSmokeTests=true`
+
+The first successful dev deployment ran at `https://github.com/cdahal300/RetailPulse/actions/runs/32655419005`.

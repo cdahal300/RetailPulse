@@ -1,5 +1,9 @@
 # FEAT-008: OpenTelemetry Observability
 
+## Status
+
+Deferred after the first successful dev AKS deployment so MVP feature delivery can continue. This is acceptable for internal development only; production traffic, external pilots, and operational dashboards remain blocked until FEAT-008 or equivalent telemetry and alerting is complete.
+
 ## Outcome
 
 As an operator, I want to understand checkout, synchronization, API, and AKS health so that failures are detected and recovered quickly.

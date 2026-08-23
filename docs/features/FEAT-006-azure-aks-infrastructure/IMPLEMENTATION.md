@@ -1,15 +1,48 @@
 # FEAT-006: Azure AKS Infrastructure - Implementation Summary
 
-## Status: In Progress (MVP Phase)
+## Status: Complete (MVP Dev Environment)
 
-This document summarizes the implementation of FEAT-006 in the current development phase, focusing on open-source validation before Azure deployment.
+This document summarizes the implementation of FEAT-006 for local validation, Azure infrastructure provisioning, and the first dev AKS deployment.
 
 ## Overview
 
 FEAT-006 provides infrastructure as code (IaC) and containerization for deploying RetailPulse to Azure Kubernetes Service (AKS). The implementation follows a staged approach:
 
-1. **Local validation** (current): Use Docker Compose with PostgreSQL and Redis
-2. **AKS deployment** (deferred): Deploy to managed Azure services when subscription supports required managed services
+1. **Local validation**: Use Docker Compose with PostgreSQL and Redis where Docker host capabilities are available.
+2. **AKS infrastructure**: Provision Azure managed services with Bicep.
+3. **AKS application deployment**: Deploy Cloud and Edge images by immutable digest through the FEAT-007 GitHub Actions workflow.
+
+## Live Dev Deployment
+
+The dev environment is provisioned in Azure and has completed a successful GitHub Actions deployment.
+
+**Azure scope**:
+- Subscription: `15cdbd30-9943-46b6-a451-e19c990099e2`
+- Tenant: `84461914-7d3c-452f-bcff-cab760563700`
+- Resource group: `rg-retailpulse-dev-centralus`
+- Region: `centralus`
+
+**Provisioned resources**:
+- AKS: `retailpulse-dev-aks`
+- ACR: `retailpulsedevzhztnpacr.azurecr.io` (`Basic` SKU)
+- PostgreSQL Flexible Server: `retailpulse-dev-pg-zhztnp` (`Standard_B1ms`, PostgreSQL 15)
+- PostgreSQL database: `retailpulse`
+- Key Vault: `retailpulsedevkvzhztnp`
+- Service Bus: `retailpulse-dev-sb-zhztnp`
+- Storage account: `rpdevzhztnpst`
+- Managed identity: `retailpulse-dev-uami`
+- GitHub Actions managed identity: `retailpulse-dev-github-actions-uami`
+
+**Current workload state**:
+- `cloud-api`: 1 ready replica, deployed from ACR by digest
+- `edge-api`: 1 ready replica, deployed from ACR by digest
+- Services: `cloud-api` and `edge-api`, both `ClusterIP` on port `5000`
+
+**Deployment evidence**:
+- FEAT-006 PR: `https://github.com/cdahal300/RetailPulse/pull/5`
+- FEAT-007 PR: `https://github.com/cdahal300/RetailPulse/pull/6`
+- Deploy workflow run: `https://github.com/cdahal300/RetailPulse/actions/runs/32655419005`
+- Result: build, image push, image scan, AKS rollout, and smoke tests succeeded.
 
 ## Completed Implementation
 
@@ -107,7 +140,7 @@ docker-compose down
 **namespace.yaml**:
 - Namespace `retailpulse`
 - ConfigMap with app settings
-- Secret placeholder for credentials (from Azure Key Vault)
+- Runtime secret is created by deployment automation from GitHub environment secrets
 - Network policies (deny-all default, allow ingress, allow internal)
 - ServiceAccount with workload identity annotations
 
@@ -207,22 +240,29 @@ curl http://localhost:5001/health/ready
 curl http://localhost:5000/api/v1/me
 ```
 
-### AKS Deployment (Future)
+### AKS Deployment
 ```bash
-# 1. Build and push images
-./scripts/build-and-push-images.sh <registry-url> <tag> --push
+# 1. Run the merged GitHub Actions workflow
+# https://github.com/cdahal300/RetailPulse/actions/workflows/deploy-aks.yml
 
-# 2. Create connection string secret from local environment variables
-kubectl create secret generic retailpulse-secrets -n retailpulse \
-  --from-literal=ConnectionStrings__Postgres="$POSTGRES_CONNECTION_STRING" \
-  --from-literal=ConnectionStrings__Redis="$REDIS_CONNECTION_STRING"
+# Use:
+# environment: dev
+# deployInfrastructure: false
+# runSmokeTests: true
+# imageTag: empty, which defaults to the commit SHA
 
-# 3. Deploy environment
-kubectl apply -k infra/kubernetes/overlays/prod
+# 2. Verify cluster state locally if needed
+az aks get-credentials \
+  --resource-group rg-retailpulse-dev-centralus \
+  --name retailpulse-dev-aks \
+  --overwrite-existing
 
-# 4. Verify deployment
-kubectl rollout status deployment/cloud-api -n retailpulse
-kubectl rollout status deployment/edge-api -n retailpulse
+kubectl get deploy,pods,svc -n retailpulse
+```
+
+### Manual Image Build (Fallback)
+```bash
+./scripts/build-and-push-images.sh retailpulsedevzhztnpacr.azurecr.io <tag> --push
 ```
 
 ## Files Created/Modified
@@ -267,13 +307,11 @@ curl http://localhost:5001/health/ready
 ## Remaining Work (For Production AKS Deployment)
 
 ### Required (Before Production)
-1. **Azure Provider Validation**: Confirm subscription supports PostgreSQL Flexible Server and ACR
-2. **Network Policies**: Complete Azure Network Policies configuration
-3. **Secrets Management**: Integrate Azure Key Vault with cluster
-4. **Monitoring**: Set up Application Insights and Prometheus
-5. **CI/CD Integration**: Connect to GitHub Actions for automated image builds
-6. **Load Testing**: Validate autoscaling and performance
-7. **Disaster Recovery**: Test backup, restore, and failover procedures
+1. **Monitoring**: Complete FEAT-008 OpenTelemetry, dashboards, and alerts before production traffic.
+2. **Secrets Management**: Move runtime secret source of truth to Azure Key Vault or External Secrets Operator.
+3. **Staging/production GitHub environments**: Configure protected environments, approvals, OIDC identities, and secrets.
+4. **Load Testing**: Validate autoscaling and performance.
+5. **Disaster Recovery**: Test backup, restore, and failover procedures.
 
 ### Optional (Post-MVP)
 1. **Service Mesh**: Implement Istio for advanced traffic management
@@ -298,8 +336,8 @@ curl http://localhost:5001/health/ready
 
 ## Notes
 
-- Current MVP uses Dev Container + Docker Compose locally
-- Azure deployment is gated by subscription service availability
+- Current dev container cannot run full Docker Compose because Docker bridge networking requires host capabilities that are not available in the container.
+- Azure dev deployment uses `centralus` because PostgreSQL Flexible Server was available there for this subscription; `eastus` did not expose supported PostgreSQL versions.
 - All manifests follow Kubernetes best practices and security guidelines
 - Health checks are critical for Kubernetes reliability
 - Network policies enforce defense-in-depth security

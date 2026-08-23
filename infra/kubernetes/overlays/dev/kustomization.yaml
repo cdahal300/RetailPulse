@@ -68,6 +68,12 @@ patches:
       name: cloud-api
     patch: |-
       - op: replace
+        path: /spec/strategy/rollingUpdate/maxSurge
+        value: 0
+      - op: replace
+        path: /spec/strategy/rollingUpdate/maxUnavailable
+        value: 1
+      - op: replace
         path: /spec/template/spec/containers/0/resources/requests/cpu
         value: "50m"
       - op: replace
@@ -83,6 +89,12 @@ patches:
       kind: Deployment
       name: edge-api
     patch: |-
+      - op: replace
+        path: /spec/strategy/rollingUpdate/maxSurge
+        value: 0
+      - op: replace
+        path: /spec/strategy/rollingUpdate/maxUnavailable
+        value: 1
       - op: replace
         path: /spec/template/spec/containers/0/resources/requests/cpu
         value: "50m"

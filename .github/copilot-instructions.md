@@ -30,3 +30,5 @@
 Before editing, identify the owning module and its nearest test. Make the smallest change that proves the behavior. Run the narrowest relevant test first, then the broader suite before merging.
 
 Every new feature must start on a fresh branch from the latest `main`, named `feat/<feature-id>-<short-name>`. Do not implement new features directly on `main` or reuse another feature branch. Merge through a pull request after required CI and review checks pass.
+
+After pushing changes that complete a feature branch, always create the pull request immediately (do not wait for a manual reminder).

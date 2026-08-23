@@ -3,8 +3,9 @@
 ## APIs and commands
 
 - Identity integration: OIDC discovery/JWKS validation with Entra External ID; no RetailPulse public credential exchange is introduced.
-- APIs: `GET /api/v1/me`, device registration/revocation commands, and policy-protected store/manager command endpoints.
+- APIs: `GET /api/v1/me`, `POST /api/v1/tenants/{tenantId}/stores/{storeId}/devices/register`, `POST /api/v1/tenants/{tenantId}/stores/{storeId}/devices/{deviceId}/revoke`, `POST /api/v1/tenants/{tenantId}/stores/{storeId}/users/{subjectId}/roles`, and policy-protected store/manager command endpoints.
 - Authentication and authorization: bearer tokens for cloud APIs; device-bound credentials and bounded cached claims for supported edge operations; server-side tenant/store/role checks.
+- Edge revocation propagation: `POST /api/v1/edge/tenants/{tenantId}/stores/{storeId}/identity/revoke-subject/{subjectId}` invalidates bounded cached sessions when revocation evidence arrives.
 - Idempotency behavior: device registration, revocation, and privileged commands use command IDs and return the original result on retry.
 - Error model: stable unauthenticated, forbidden, invalid-token, revoked-device, scope, and transient identity-provider errors without leaking policy details.
 

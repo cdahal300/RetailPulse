@@ -81,7 +81,7 @@ static (IResult? Result, IdentityToken? Token) Evaluate(TenantStoreScope scope, 
 		return (Results.Unauthorized(), null);
 	}
 
-	return (Results.Forbid(), null);
+	return (Results.StatusCode(StatusCodes.Status403Forbidden), null);
 }
 
 static bool TryReadToken(HttpRequest request, out IdentityToken token)

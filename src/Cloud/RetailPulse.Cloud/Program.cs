@@ -57,7 +57,7 @@ app.MapPost("/api/v1/tenants/{tenantId}/stores/{storeId}/manager/inventory-adjus
             return Results.Unauthorized();
         }
 
-        return Results.Forbid();
+        return Results.StatusCode(StatusCodes.Status403Forbidden);
     });
 
 app.MapPost("/api/v1/tenants/{tenantId}/stores/{storeId}/devices/register",
@@ -90,7 +90,7 @@ app.MapPost("/api/v1/tenants/{tenantId}/stores/{storeId}/devices/register",
             return Results.Unauthorized();
         }
 
-        return Results.Forbid();
+        return Results.StatusCode(StatusCodes.Status403Forbidden);
     });
 
 app.Run();

@@ -1,0 +1,250 @@
+using System.Net;
+using Microsoft.AspNetCore.Mvc.Testing;
+using RetailPulse.Cloud;
+using RetailPulse.Edge;
+
+namespace RetailPulse.IntegrationTests;
+
+public sealed class IdentityAuthorizationEndpointIntegrationTests : IClassFixture<WebApplicationFactory<CloudApiMarker>>, IClassFixture<WebApplicationFactory<EdgeApiMarker>>
+{
+    private readonly HttpClient cloudClient;
+    private readonly HttpClient edgeClient;
+
+    public IdentityAuthorizationEndpointIntegrationTests(WebApplicationFactory<CloudApiMarker> cloudFactory, WebApplicationFactory<EdgeApiMarker> edgeFactory)
+    {
+        cloudClient = cloudFactory.CreateClient(new WebApplicationFactoryClientOptions { BaseAddress = new Uri("https://localhost") });
+        edgeClient = edgeFactory.CreateClient(new WebApplicationFactoryClientOptions { BaseAddress = new Uri("https://localhost") });
+    }
+
+    [Fact]
+    public async Task Cloud_manager_endpoint_returns_expected_auth_status_codes()
+    {
+        var noToken = await cloudClient.PostAsync("/api/v1/tenants/tenant-1/stores/store-1/manager/inventory-adjustments", content: null);
+        Assert.Equal(HttpStatusCode.Unauthorized, noToken.StatusCode);
+
+        using var cashierRequest = CloudRequest(
+            "/api/v1/tenants/tenant-1/stores/store-1/manager/inventory-adjustments",
+            tokenId: "cashier-token",
+            subjectId: "cashier-1",
+            tenantId: "tenant-1",
+            storeId: "store-1",
+            principalType: "User",
+            roles: "Cashier",
+            issuedAt: DateTimeOffset.UtcNow.AddMinutes(-5),
+            expiresAt: DateTimeOffset.UtcNow.AddMinutes(30));
+        var cashier = await cloudClient.SendAsync(cashierRequest);
+        Assert.Equal(HttpStatusCode.Forbidden, cashier.StatusCode);
+
+        using var managerRequest = CloudRequest(
+            "/api/v1/tenants/tenant-1/stores/store-1/manager/inventory-adjustments",
+            tokenId: "manager-token",
+            subjectId: "manager-1",
+            tenantId: "tenant-1",
+            storeId: "store-1",
+            principalType: "User",
+            roles: "Manager",
+            issuedAt: DateTimeOffset.UtcNow.AddMinutes(-5),
+            expiresAt: DateTimeOffset.UtcNow.AddMinutes(30));
+        var manager = await cloudClient.SendAsync(managerRequest);
+        Assert.Equal(HttpStatusCode.OK, manager.StatusCode);
+    }
+
+    [Fact]
+    public async Task Cloud_rejects_expired_and_cross_store_tokens()
+    {
+        using var expiredRequest = CloudRequest(
+            "/api/v1/tenants/tenant-1/stores/store-1/manager/inventory-adjustments",
+            tokenId: "expired-token",
+            subjectId: "manager-1",
+            tenantId: "tenant-1",
+            storeId: "store-1",
+            principalType: "User",
+            roles: "Manager",
+            issuedAt: DateTimeOffset.UtcNow.AddHours(-2),
+            expiresAt: DateTimeOffset.UtcNow.AddMinutes(-1));
+        var expired = await cloudClient.SendAsync(expiredRequest);
+        Assert.Equal(HttpStatusCode.Unauthorized, expired.StatusCode);
+
+        using var wrongStoreRequest = CloudRequest(
+            "/api/v1/tenants/tenant-1/stores/store-2/manager/inventory-adjustments",
+            tokenId: "manager-token",
+            subjectId: "manager-1",
+            tenantId: "tenant-1",
+            storeId: "store-1",
+            principalType: "User",
+            roles: "Manager",
+            issuedAt: DateTimeOffset.UtcNow.AddMinutes(-5),
+            expiresAt: DateTimeOffset.UtcNow.AddMinutes(30));
+        var wrongStore = await cloudClient.SendAsync(wrongStoreRequest);
+        Assert.Equal(HttpStatusCode.Forbidden, wrongStore.StatusCode);
+    }
+
+    [Fact]
+    public async Task Cloud_device_registration_requires_owner_role()
+    {
+        using var ownerRequest = CloudRequest(
+            "/api/v1/tenants/tenant-1/stores/store-1/devices/register",
+            tokenId: "owner-token",
+            subjectId: "owner-1",
+            tenantId: "tenant-1",
+            storeId: null,
+            principalType: "User",
+            roles: "Owner",
+            issuedAt: DateTimeOffset.UtcNow.AddMinutes(-5),
+            expiresAt: DateTimeOffset.UtcNow.AddMinutes(30));
+        var owner = await cloudClient.SendAsync(ownerRequest);
+        Assert.Equal(HttpStatusCode.OK, owner.StatusCode);
+
+        using var deviceRequest = CloudRequest(
+            "/api/v1/tenants/tenant-1/stores/store-1/devices/register",
+            tokenId: "device-token",
+            subjectId: "device-1",
+            tenantId: "tenant-1",
+            storeId: "store-1",
+            principalType: "Device",
+            roles: "Device",
+            issuedAt: DateTimeOffset.UtcNow.AddMinutes(-5),
+            expiresAt: DateTimeOffset.UtcNow.AddMinutes(30));
+        var device = await cloudClient.SendAsync(deviceRequest);
+        Assert.Equal(HttpStatusCode.Forbidden, device.StatusCode);
+    }
+
+    [Fact]
+    public async Task Edge_checkout_and_adjust_enforce_role_and_scope()
+    {
+        using var checkoutRequest = EdgeRequest(
+            "/api/v1/edge/tenants/tenant-1/stores/store-1/checkout",
+            tokenId: "cashier-token",
+            subjectId: "cashier-1",
+            tenantId: "tenant-1",
+            storeId: "store-1",
+            principalType: "User",
+            roles: "Cashier",
+            issuedAt: DateTimeOffset.UtcNow.AddMinutes(-5),
+            expiresAt: DateTimeOffset.UtcNow.AddMinutes(30),
+            sessionId: "cashier-session");
+        var checkout = await edgeClient.SendAsync(checkoutRequest);
+        Assert.Equal(HttpStatusCode.OK, checkout.StatusCode);
+
+        using var adjustAsCashierRequest = EdgeRequest(
+            "/api/v1/edge/tenants/tenant-1/stores/store-1/inventory/adjust",
+            tokenId: "cashier-token",
+            subjectId: "cashier-1",
+            tenantId: "tenant-1",
+            storeId: "store-1",
+            principalType: "User",
+            roles: "Cashier",
+            issuedAt: DateTimeOffset.UtcNow.AddMinutes(-5),
+            expiresAt: DateTimeOffset.UtcNow.AddMinutes(30),
+            sessionId: "cashier-session");
+        var adjustAsCashier = await edgeClient.SendAsync(adjustAsCashierRequest);
+        Assert.Equal(HttpStatusCode.Forbidden, adjustAsCashier.StatusCode);
+
+        using var wrongStoreRequest = EdgeRequest(
+            "/api/v1/edge/tenants/tenant-1/stores/store-2/inventory/adjust",
+            tokenId: "manager-token",
+            subjectId: "manager-1",
+            tenantId: "tenant-1",
+            storeId: "store-1",
+            principalType: "User",
+            roles: "Manager",
+            issuedAt: DateTimeOffset.UtcNow.AddMinutes(-5),
+            expiresAt: DateTimeOffset.UtcNow.AddMinutes(30),
+            sessionId: "manager-session");
+        var wrongStore = await edgeClient.SendAsync(wrongStoreRequest);
+        Assert.Equal(HttpStatusCode.Forbidden, wrongStore.StatusCode);
+    }
+
+    [Fact]
+    public async Task Edge_rejects_expired_token_and_allows_bounded_cached_session()
+    {
+        using var expiredRequest = EdgeRequest(
+            "/api/v1/edge/tenants/tenant-1/stores/store-1/inventory/adjust",
+            tokenId: "expired-manager-token",
+            subjectId: "manager-1",
+            tenantId: "tenant-1",
+            storeId: "store-1",
+            principalType: "User",
+            roles: "Manager",
+            issuedAt: DateTimeOffset.UtcNow.AddHours(-2),
+            expiresAt: DateTimeOffset.UtcNow.AddMinutes(-1),
+            sessionId: "expired-session");
+        var expired = await edgeClient.SendAsync(expiredRequest);
+        Assert.Equal(HttpStatusCode.Unauthorized, expired.StatusCode);
+
+        using var primeSessionRequest = EdgeRequest(
+            "/api/v1/edge/tenants/tenant-1/stores/store-1/checkout",
+            tokenId: "manager-token",
+            subjectId: "manager-1",
+            tenantId: "tenant-1",
+            storeId: "store-1",
+            principalType: "User",
+            roles: "Manager",
+            issuedAt: DateTimeOffset.UtcNow.AddMinutes(-5),
+            expiresAt: DateTimeOffset.UtcNow.AddMinutes(30),
+            sessionId: "offline-session");
+        var primed = await edgeClient.SendAsync(primeSessionRequest);
+        Assert.Equal(HttpStatusCode.OK, primed.StatusCode);
+
+        using var cachedRequest = new HttpRequestMessage(HttpMethod.Post, "/api/v1/edge/tenants/tenant-1/stores/store-1/checkout");
+        cachedRequest.Headers.Add("X-RetailPulse-Session-Id", "offline-session");
+        var cached = await edgeClient.SendAsync(cachedRequest);
+        Assert.Equal(HttpStatusCode.OK, cached.StatusCode);
+    }
+
+    private static HttpRequestMessage CloudRequest(
+        string path,
+        string tokenId,
+        string subjectId,
+        string tenantId,
+        string? storeId,
+        string principalType,
+        string roles,
+        DateTimeOffset issuedAt,
+        DateTimeOffset expiresAt)
+    {
+        var request = new HttpRequestMessage(HttpMethod.Post, path);
+        request.Headers.Add("X-RetailPulse-Token-Id", tokenId);
+        request.Headers.Add("X-RetailPulse-Subject-Id", subjectId);
+        request.Headers.Add("X-RetailPulse-Tenant-Id", tenantId);
+        if (!string.IsNullOrWhiteSpace(storeId))
+        {
+            request.Headers.Add("X-RetailPulse-Store-Id", storeId);
+        }
+
+        request.Headers.Add("X-RetailPulse-Principal-Type", principalType);
+        request.Headers.Add("X-RetailPulse-Roles", roles);
+        request.Headers.Add("X-RetailPulse-Issued-At", issuedAt.ToString("O"));
+        request.Headers.Add("X-RetailPulse-Expires-At", expiresAt.ToString("O"));
+        return request;
+    }
+
+    private static HttpRequestMessage EdgeRequest(
+        string path,
+        string tokenId,
+        string subjectId,
+        string tenantId,
+        string? storeId,
+        string principalType,
+        string roles,
+        DateTimeOffset issuedAt,
+        DateTimeOffset expiresAt,
+        string sessionId)
+    {
+        var request = new HttpRequestMessage(HttpMethod.Post, path);
+        request.Headers.Add("X-RetailPulse-Token-Id", tokenId);
+        request.Headers.Add("X-RetailPulse-Subject-Id", subjectId);
+        request.Headers.Add("X-RetailPulse-Tenant-Id", tenantId);
+        if (!string.IsNullOrWhiteSpace(storeId))
+        {
+            request.Headers.Add("X-RetailPulse-Store-Id", storeId);
+        }
+
+        request.Headers.Add("X-RetailPulse-Principal-Type", principalType);
+        request.Headers.Add("X-RetailPulse-Roles", roles);
+        request.Headers.Add("X-RetailPulse-Issued-At", issuedAt.ToString("O"));
+        request.Headers.Add("X-RetailPulse-Expires-At", expiresAt.ToString("O"));
+        request.Headers.Add("X-RetailPulse-Session-Id", sessionId);
+        return request;
+    }
+}

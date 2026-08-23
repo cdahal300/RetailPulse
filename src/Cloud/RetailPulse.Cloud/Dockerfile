@@ -8,7 +8,7 @@ COPY src/BuildingBlocks/RetailPulse.BuildingBlocks/RetailPulse.BuildingBlocks.cs
 COPY src/Cloud/RetailPulse.Cloud/RetailPulse.Cloud.csproj src/Cloud/RetailPulse.Cloud/
 
 # Restore dependencies
-RUN dotnet restore RetailPulse.sln
+RUN dotnet restore src/Cloud/RetailPulse.Cloud/RetailPulse.Cloud.csproj
 
 # Copy source code
 COPY src/ src/

@@ -4,6 +4,10 @@
 
 As an engineering team, we want repeatable Azure environments so that RetailPulse can be deployed consistently and recovered safely.
 
+## Current MVP status
+
+Azure deployment is deferred for the current sponsorship subscription. The subscription rejected managed PostgreSQL provisioning and Azure Container Registry during validation. Development continues in the checked-in Dev Container, using local PostgreSQL 16 and Redis 7 from Docker Compose. The Azure composition remains a future deployment target and must be revalidated against supported subscription capabilities before use.
+
 ## Scope
 
 - AKS cluster, node pools, managed identity, workload identity, ingress, and network policy.
@@ -22,7 +26,7 @@ As an engineering team, we want repeatable Azure environments so that RetailPuls
 
 ## Dependencies and QA
 
-Foundation for FEAT-007 and all cloud features. Validate IaC, policy checks, least privilege, network boundaries, disaster recovery, and cost limits.
+Foundation for FEAT-007 and all cloud features. For the current MVP, validate application behavior locally in the Dev Container first; defer Azure integration, policy, private networking, and disaster-recovery tests until supported services are available.
 
 ## Definition of Ready
 

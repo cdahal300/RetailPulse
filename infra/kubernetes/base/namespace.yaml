@@ -1,0 +1,87 @@
+# Kubernetes namespace for RetailPulse
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: retailpulse
+  labels:
+    app: retailpulse
+    environment: production
+---
+# ConfigMap for application settings
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: retailpulse-config
+  namespace: retailpulse
+data:
+  ASPNETCORE_ENVIRONMENT: Production
+  ASPNETCORE_URLS: "http://+:5000"
+---
+# NetworkPolicy: Deny all ingress by default
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: retailpulse-deny-all-ingress
+  namespace: retailpulse
+spec:
+  podSelector: {}
+  policyTypes:
+  - Ingress
+---
+# NetworkPolicy: Allow ingress from ingress controller to APIs
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: retailpulse-allow-ingress-controller
+  namespace: retailpulse
+spec:
+  podSelector:
+    matchLabels:
+      app: cloud-api
+  policyTypes:
+  - Ingress
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: ingress-nginx
+    ports:
+    - protocol: TCP
+      port: 5000
+---
+# NetworkPolicy: Allow Edge API from internal traffic only
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: retailpulse-allow-edge-internal
+  namespace: retailpulse
+spec:
+  podSelector:
+    matchLabels:
+      app: edge-api
+  policyTypes:
+  - Ingress
+  ingress:
+  - from:
+    - podSelector:
+        matchLabels:
+          app: cloud-api
+    ports:
+    - protocol: TCP
+      port: 5000
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: ingress-nginx
+    ports:
+    - protocol: TCP
+      port: 5000
+---
+# ServiceAccount for workload identity
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: retailpulse-app
+  namespace: retailpulse
+  annotations:
+    azure.workload.identity/client-id: "WORKLOAD_IDENTITY_CLIENT_ID"

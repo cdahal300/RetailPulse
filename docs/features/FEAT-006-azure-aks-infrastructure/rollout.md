@@ -5,15 +5,16 @@
 - Feature flag: no application feature flag; infrastructure changes use versioned IaC and approved change records.
 - Safe default: private networking, least privilege, deny-by-default policies, and non-production resource sizes until capacity is proven.
 - Migration strategy: provision new resources additively, validate backups and data migration, then cut traffic; avoid in-place destructive changes.
-- Deployment order: subscriptions/policies, network/private endpoints, identity/Key Vault, registry, data/messaging, AKS/ingress, monitoring, workloads.
+- MVP order: Dev Container and local Compose services, application tests, then cloud deployment planning. Azure order for a supported subscription: subscriptions/providers/policies, network/private endpoints, identity/Key Vault, registry, data/messaging, AKS/ingress, monitoring, workloads.
 - Approval gates: platform owner, security, finance, data owner, operations, and production change approval.
 
 ## Rollout
 
-- Targeting plan: development, test, staging, production with environment-specific parameters and no credential reuse.
+- Targeting plan: local development first, then development/test/staging/production only after each target subscription and region passes provider/SKU validation; never reuse credentials.
 - Metrics: pod/node health, capacity, API availability, ingress errors, database/Service Bus health, backup success, security policy violations, and cost.
 - Alerts and runbooks: link AKS upgrade, secret rotation, backup/restore, node failure, WAF, and regional recovery runbooks.
 - Expansion criteria: policy-clean plan, successful restore, health probes, private connectivity, cost budget, and on-call rehearsal.
+- Current exit criterion: do not deploy FEAT-006 to the sponsorship subscription until an approved replacement for managed PostgreSQL and ACR is available.
 
 ## Rollback
 

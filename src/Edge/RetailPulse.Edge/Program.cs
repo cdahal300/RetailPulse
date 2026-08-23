@@ -3,13 +3,51 @@ using RetailPulse.Edge;
 
 var builder = WebApplication.CreateBuilder(args);
 var databasePath = builder.Configuration["RetailPulse:EdgeDatabasePath"] ?? Path.Combine(AppContext.BaseDirectory, "retailpulse-edge.db");
-builder.Services.AddSingleton<ILocalCheckoutPersistence>(_ => new SqliteCheckoutPersistence(databasePath));
+var sqliteCheckoutPersistence = new SqliteCheckoutPersistence(databasePath);
+builder.Services.AddSingleton<ILocalCheckoutPersistence>(sqliteCheckoutPersistence);
+builder.Services.AddSingleton<IOutboxPersistence>(sqliteCheckoutPersistence);
+builder.Services.AddSingleton(sqliteCheckoutPersistence);
 builder.Services.AddSingleton(_ => new BoundedAuthorizationSessionCache(TimeSpan.FromMinutes(15)));
 builder.Services.AddSingleton<IIdentityAuditEmitter, NoOpIdentityAuditEmitter>();
 builder.Services.AddSingleton<IIdentityRevocationStore, InMemoryIdentityRevocationStore>();
 var app = builder.Build();
 
 app.MapGet("/", () => "RetailPulse Edge");
+
+// Health check endpoints for Kubernetes readiness and liveness probes
+app.MapGet("/health/live", async (SqliteCheckoutPersistence persistence) =>
+{
+	try
+	{
+		var health = await persistence.GetHealthAsync();
+		return Results.Ok(new { status = "alive", timestamp = DateTimeOffset.UtcNow, schema_version = health.SchemaVersion, pending_count = health.PendingOutboxCount });
+	}
+	catch
+	{
+		return Results.StatusCode(503);
+	}
+})
+    .WithName("HealthLive")
+    .AllowAnonymous();
+
+app.MapGet("/health/ready", async (SqliteCheckoutPersistence persistence) =>
+{
+	try
+	{
+		var health = await persistence.GetHealthAsync();
+		if (!health.Available)
+		{
+			return Results.StatusCode(503);
+		}
+		return Results.Ok(new { status = "ready", timestamp = DateTimeOffset.UtcNow, schema_version = health.SchemaVersion });
+	}
+	catch
+	{
+		return Results.StatusCode(503);
+	}
+})
+    .WithName("HealthReady")
+    .AllowAnonymous();
 
 app.MapPost("/api/v1/edge/tenants/{tenantId}/stores/{storeId}/checkout",
 	async (string tenantId, string storeId, HttpRequest request, BoundedAuthorizationSessionCache cache, IIdentityAuditEmitter auditEmitter, IIdentityRevocationStore revocations) =>

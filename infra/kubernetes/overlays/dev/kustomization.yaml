@@ -1,0 +1,93 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: retailpulse
+
+bases:
+  - ../../base
+
+# Replicas for dev environment
+replicas:
+  - name: cloud-api
+    count: 1
+  - name: edge-api
+    count: 1
+
+# Environment-specific ConfigMap values
+configMapGenerator:
+  - name: retailpulse-config
+    behavior: merge
+    literals:
+      - ASPNETCORE_ENVIRONMENT=Development
+      - ASPNETCORE_URLS=http://+:5000
+
+# Environment-specific image tags (for dev, use 'dev' tag)
+images:
+  - name: retailpulse-cloud
+    newName: retailpulse-cloudcontainerregistry.azurecr.io/retailpulse-cloud
+    newTag: dev
+  - name: retailpulse-edge
+    newName: retailpulse-cloudcontainerregistry.azurecr.io/retailpulse-edge
+    newTag: dev
+
+# Common labels
+commonLabels:
+  environment: dev
+  version: v1
+
+# Patches for dev environment
+patches:
+  # Reduce replicas for development
+  - target:
+      kind: HorizontalPodAutoscaler
+      name: cloud-api-hpa
+    patch: |-
+      - op: replace
+        path: /spec/minReplicas
+        value: 1
+      - op: replace
+        path: /spec/maxReplicas
+        value: 2
+  - target:
+      kind: HorizontalPodAutoscaler
+      name: edge-api-hpa
+    patch: |-
+      - op: replace
+        path: /spec/minReplicas
+        value: 1
+      - op: replace
+        path: /spec/maxReplicas
+        value: 2
+  # Reduce resource requests for development
+  - target:
+      kind: Deployment
+      name: cloud-api
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/requests/cpu
+        value: "50m"
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/requests/memory
+        value: "128Mi"
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/limits/cpu
+        value: "250m"
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/limits/memory
+        value: "256Mi"
+  - target:
+      kind: Deployment
+      name: edge-api
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/requests/cpu
+        value: "50m"
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/requests/memory
+        value: "128Mi"
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/limits/cpu
+        value: "250m"
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/limits/memory
+        value: "256Mi"

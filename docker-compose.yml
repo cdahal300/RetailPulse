@@ -1,0 +1,67 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: retailpulse
+      POSTGRES_USER: retailpulse
+      POSTGRES_PASSWORD: retailpulse-dev
+    ports:
+      - "5432:5432"
+    volumes:
+      - retailpulse-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U retailpulse -d retailpulse"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - retailpulse-redis:/data
+
+  cloud-api:
+    build:
+      context: .
+      dockerfile: src/Cloud/RetailPulse.Cloud/Dockerfile
+    environment:
+      ASPNETCORE_URLS: http://+:5000
+      ASPNETCORE_ENVIRONMENT: Development
+      ConnectionStrings__Postgres: Host=postgres;Port=5432;Database=retailpulse;Username=retailpulse;Password=retailpulse-dev
+      ConnectionStrings__Redis: redis:6379
+    ports:
+      - "5000:5000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+
+  edge-api:
+    build:
+      context: .
+      dockerfile: src/Edge/RetailPulse.Edge/Dockerfile
+    environment:
+      ASPNETCORE_URLS: http://+:5000
+      ASPNETCORE_ENVIRONMENT: Development
+      RetailPulse__EdgeDatabasePath: /data/retailpulse-edge.db
+      ConnectionStrings__Postgres: Host=postgres;Port=5432;Database=retailpulse;Username=retailpulse;Password=retailpulse-dev
+      ConnectionStrings__Redis: redis:6379
+    ports:
+      - "5001:5000"
+    volumes:
+      - retailpulse-edge-data:/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+
+volumes:
+  retailpulse-postgres:
+  retailpulse-redis:
+  retailpulse-edge-data:

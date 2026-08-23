@@ -4,6 +4,7 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddSingleton<IIdentityAuditEmitter, NoOpIdentityAuditEmitter>();
 builder.Services.AddSingleton<IIdentityLifecycleService, InMemoryIdentityLifecycleService>();
 builder.Services.AddSingleton<IIdentityRevocationStore, InMemoryIdentityRevocationStore>();
+builder.Services.AddSingleton<IAnalyticsReportProvider, SimulatedAnalyticsReportProvider>();
 
 var app = builder.Build();
 app.UseHttpsRedirection();
@@ -38,6 +39,34 @@ app.MapGet("/api/v1/me", (HttpRequest request, IIdentityRevocationStore revocati
         token.ExpiresAt
     });
 });
+
+app.MapGet("/api/v1/tenants/{tenantId}/stores/{storeId}/reports/sales",
+    async (string tenantId, string storeId, DateTimeOffset? from, DateTimeOffset? to, string? timezone, string? currency, HttpRequest request, IIdentityAuditEmitter auditEmitter, IIdentityRevocationStore revocations, IAnalyticsReportProvider reports) =>
+    {
+        var authorization = await AuthorizeAsync(request, new TenantStoreScope(tenantId, storeId), AuthorizationAction.ViewReports, auditEmitter, revocations);
+        if (authorization.Result is not null)
+        {
+            return authorization.Result;
+        }
+
+        var now = DateTimeOffset.UtcNow;
+        var reportRequest = new AnalyticsReportRequest(
+            tenantId,
+            storeId,
+            from ?? now.AddDays(-1),
+            to ?? now.AddDays(1),
+            string.IsNullOrWhiteSpace(timezone) ? "UTC" : timezone,
+            string.IsNullOrWhiteSpace(currency) ? "USD" : currency);
+
+        try
+        {
+            return Results.Ok(await reports.GetSalesReportAsync(reportRequest, request.HttpContext.RequestAborted));
+        }
+        catch (ArgumentException ex)
+        {
+            return Results.BadRequest(new { Error = ex.Message });
+        }
+    });
 
 app.MapPost("/api/v1/tenants/{tenantId}/stores/{storeId}/manager/inventory-adjustments",
     async (string tenantId, string storeId, HttpRequest request, IIdentityAuditEmitter auditEmitter, IIdentityRevocationStore revocations) =>

@@ -2,15 +2,16 @@
 
 ## Vertical slice order
 
-1. Write the feature specification under `docs/features/<feature-id>-<short-name>/`.
-2. Review scope, non-goals, architecture, security, data, offline, payment, mobile, and rollout impact.
-3. Define the domain rule and acceptance criteria.
-4. Implement local edge persistence and the outbox transaction where applicable.
-5. Define the cloud command and event contract.
-6. Implement sync retry and idempotency behavior.
-7. Implement UI or device integration.
-8. Add unit, integration, contract, and end-to-end tests.
-9. Add telemetry, dashboard, and runbook updates.
+1. Update local `main` and create a fresh `feat/<feature-id>-<short-name>` branch.
+2. Write the feature specification under `docs/features/<feature-id>-<short-name>/`.
+3. Review scope, non-goals, architecture, security, data, offline, payment, mobile, and rollout impact.
+4. Define the domain rule and acceptance criteria.
+5. Implement local edge persistence and the outbox transaction where applicable.
+6. Define the cloud command and event contract.
+7. Implement sync retry and idempotency behavior.
+8. Implement UI or device integration.
+9. Add unit, integration, contract, and end-to-end tests.
+10. Add telemetry, dashboard, and runbook updates.
 
 ## Prompt usage
 

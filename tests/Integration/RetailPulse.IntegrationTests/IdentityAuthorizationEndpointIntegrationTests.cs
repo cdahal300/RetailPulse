@@ -1,5 +1,8 @@
 using System.Net;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
+using RetailPulse.BuildingBlocks;
 using RetailPulse.Cloud;
 using RetailPulse.Edge;
 
@@ -192,6 +195,98 @@ public sealed class IdentityAuthorizationEndpointIntegrationTests : IClassFixtur
         Assert.Equal(HttpStatusCode.OK, cached.StatusCode);
     }
 
+    [Fact]
+    public async Task Cloud_emits_audit_events_for_authorized_and_rejected_requests()
+    {
+        var auditEmitter = new InMemoryIdentityAuditEmitter();
+        await using var factory = new WebApplicationFactory<CloudApiMarker>().WithWebHostBuilder(builder =>
+        {
+            builder.ConfigureServices(services =>
+            {
+                services.RemoveAll<IIdentityAuditEmitter>();
+                services.AddSingleton<IIdentityAuditEmitter>(auditEmitter);
+            });
+        });
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { BaseAddress = new Uri("https://localhost") });
+
+        using var managerRequest = CloudRequest(
+            "/api/v1/tenants/tenant-1/stores/store-1/manager/inventory-adjustments",
+            tokenId: "manager-token",
+            subjectId: "manager-1",
+            tenantId: "tenant-1",
+            storeId: "store-1",
+            principalType: "User",
+            roles: "Manager",
+            issuedAt: DateTimeOffset.UtcNow.AddMinutes(-5),
+            expiresAt: DateTimeOffset.UtcNow.AddMinutes(30));
+        managerRequest.Headers.Add("X-Correlation-Id", "corr-ok-1");
+        var managerResult = await client.SendAsync(managerRequest);
+
+        using var cashierRequest = CloudRequest(
+            "/api/v1/tenants/tenant-1/stores/store-1/manager/inventory-adjustments",
+            tokenId: "cashier-token",
+            subjectId: "cashier-1",
+            tenantId: "tenant-1",
+            storeId: "store-1",
+            principalType: "User",
+            roles: "Cashier",
+            issuedAt: DateTimeOffset.UtcNow.AddMinutes(-5),
+            expiresAt: DateTimeOffset.UtcNow.AddMinutes(30));
+        cashierRequest.Headers.Add("X-Correlation-Id", "corr-denied-1");
+        var cashierResult = await client.SendAsync(cashierRequest);
+
+        Assert.Equal(HttpStatusCode.OK, managerResult.StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, cashierResult.StatusCode);
+
+        var authorizedEvent = Assert.Single(auditEmitter.PrivilegedActions);
+        Assert.Equal("manager-1", authorizedEvent.SubjectId);
+        Assert.Equal("AdjustInventory", authorizedEvent.Action);
+        Assert.Equal("corr-ok-1", authorizedEvent.CorrelationId);
+
+        var rejectedEvent = Assert.Single(auditEmitter.TokenRejections);
+        Assert.Equal("cashier-1", rejectedEvent.SubjectId);
+        Assert.Equal("AdjustInventory", rejectedEvent.Action);
+        Assert.Equal(AuthorizationFailure.MissingRole, rejectedEvent.Failure);
+        Assert.Equal("corr-denied-1", rejectedEvent.CorrelationId);
+    }
+
+    [Fact]
+    public async Task Edge_emits_rejection_audit_for_expired_token()
+    {
+        var auditEmitter = new InMemoryIdentityAuditEmitter();
+        await using var factory = new WebApplicationFactory<EdgeApiMarker>().WithWebHostBuilder(builder =>
+        {
+            builder.ConfigureServices(services =>
+            {
+                services.RemoveAll<IIdentityAuditEmitter>();
+                services.AddSingleton<IIdentityAuditEmitter>(auditEmitter);
+            });
+        });
+        using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { BaseAddress = new Uri("https://localhost") });
+
+        using var expiredRequest = EdgeRequest(
+            "/api/v1/edge/tenants/tenant-1/stores/store-1/inventory/adjust",
+            tokenId: "expired-token",
+            subjectId: "manager-1",
+            tenantId: "tenant-1",
+            storeId: "store-1",
+            principalType: "User",
+            roles: "Manager",
+            issuedAt: DateTimeOffset.UtcNow.AddHours(-2),
+            expiresAt: DateTimeOffset.UtcNow.AddMinutes(-1),
+            sessionId: "expired-session");
+        expiredRequest.Headers.Add("X-Correlation-Id", "corr-expired-edge");
+
+        var result = await client.SendAsync(expiredRequest);
+
+        Assert.Equal(HttpStatusCode.Unauthorized, result.StatusCode);
+        var rejection = Assert.Single(auditEmitter.TokenRejections);
+        Assert.Equal("manager-1", rejection.SubjectId);
+        Assert.Equal(AuthorizationFailure.ExpiredToken, rejection.Failure);
+        Assert.Equal("AdjustInventory", rejection.Action);
+        Assert.Equal("corr-expired-edge", rejection.CorrelationId);
+    }
+
     private static HttpRequestMessage CloudRequest(
         string path,
         string tokenId,
@@ -246,5 +341,54 @@ public sealed class IdentityAuthorizationEndpointIntegrationTests : IClassFixtur
         request.Headers.Add("X-RetailPulse-Expires-At", expiresAt.ToString("O"));
         request.Headers.Add("X-RetailPulse-Session-Id", sessionId);
         return request;
+    }
+}
+
+public sealed class InMemoryIdentityAuditEmitter : IIdentityAuditEmitter
+{
+    private readonly List<PrivilegedActionAuditedV1> privilegedActions = [];
+    private readonly List<TokenRejectedAuditedV1> tokenRejections = [];
+    private readonly object gate = new();
+
+    public IReadOnlyList<PrivilegedActionAuditedV1> PrivilegedActions
+    {
+        get
+        {
+            lock (gate)
+            {
+                return privilegedActions.ToArray();
+            }
+        }
+    }
+
+    public IReadOnlyList<TokenRejectedAuditedV1> TokenRejections
+    {
+        get
+        {
+            lock (gate)
+            {
+                return tokenRejections.ToArray();
+            }
+        }
+    }
+
+    public Task EmitPrivilegedActionAsync(PrivilegedActionAuditedV1 auditEvent, CancellationToken cancellationToken = default)
+    {
+        lock (gate)
+        {
+            privilegedActions.Add(auditEvent);
+        }
+
+        return Task.CompletedTask;
+    }
+
+    public Task EmitTokenRejectedAsync(TokenRejectedAuditedV1 auditEvent, CancellationToken cancellationToken = default)
+    {
+        lock (gate)
+        {
+            tokenRejections.Add(auditEvent);
+        }
+
+        return Task.CompletedTask;
     }
 }

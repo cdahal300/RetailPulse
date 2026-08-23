@@ -1,6 +1,7 @@
 using RetailPulse.BuildingBlocks;
 
 var builder = WebApplication.CreateBuilder(args);
+builder.Services.AddSingleton<IIdentityAuditEmitter, NoOpIdentityAuditEmitter>();
 
 var app = builder.Build();
 app.UseHttpsRedirection();
@@ -28,20 +29,44 @@ app.MapGet("/api/v1/me", (HttpRequest request) =>
 });
 
 app.MapPost("/api/v1/tenants/{tenantId}/stores/{storeId}/manager/inventory-adjustments",
-    (string tenantId, string storeId, HttpRequest request) =>
+    async (string tenantId, string storeId, HttpRequest request, IIdentityAuditEmitter auditEmitter) =>
     {
+        var correlationId = CorrelationId(request);
+        var now = DateTimeOffset.UtcNow;
         if (!TryReadToken(request, out var token))
         {
+            await auditEmitter.EmitTokenRejectedAsync(new(
+                EventId: Guid.NewGuid().ToString("N"),
+                AggregateId: $"tenant:{tenantId}:store:{storeId}",
+                TenantId: tenantId,
+                StoreId: storeId,
+                OccurredAt: now,
+                CorrelationId: correlationId,
+                SubjectId: null,
+                Action: AuthorizationAction.AdjustInventory.ToString(),
+                Failure: AuthorizationFailure.InvalidToken,
+                Outcome: "Rejected"));
             return Results.Unauthorized();
         }
 
         var decision = IdentityAuthorizationPolicy.Evaluate(
             token,
             new AuthorizationRequest(new TenantStoreScope(tenantId, storeId), AuthorizationAction.AdjustInventory),
-            DateTimeOffset.UtcNow);
+            now);
 
         if (decision.Allowed)
         {
+            await auditEmitter.EmitPrivilegedActionAsync(new(
+                EventId: Guid.NewGuid().ToString("N"),
+                AggregateId: token.SubjectId,
+                TenantId: token.TenantId,
+                StoreId: storeId,
+                OccurredAt: now,
+                CorrelationId: correlationId,
+                SubjectId: token.SubjectId,
+                PrincipalType: token.PrincipalType.ToString(),
+                Action: AuthorizationAction.AdjustInventory.ToString(),
+                Outcome: "Authorized"));
             return Results.Ok(new
             {
                 Outcome = "Authorized",
@@ -54,27 +79,73 @@ app.MapPost("/api/v1/tenants/{tenantId}/stores/{storeId}/manager/inventory-adjus
 
         if (decision.Failure is AuthorizationFailure.ExpiredToken or AuthorizationFailure.InvalidToken or AuthorizationFailure.Revoked)
         {
+            await auditEmitter.EmitTokenRejectedAsync(new(
+                EventId: Guid.NewGuid().ToString("N"),
+                AggregateId: token.SubjectId,
+                TenantId: token.TenantId,
+                StoreId: storeId,
+                OccurredAt: now,
+                CorrelationId: correlationId,
+                SubjectId: token.SubjectId,
+                Action: AuthorizationAction.AdjustInventory.ToString(),
+                Failure: decision.Failure ?? AuthorizationFailure.InvalidToken,
+                Outcome: "Rejected"));
             return Results.Unauthorized();
         }
 
+        await auditEmitter.EmitTokenRejectedAsync(new(
+            EventId: Guid.NewGuid().ToString("N"),
+            AggregateId: token.SubjectId,
+            TenantId: token.TenantId,
+            StoreId: storeId,
+            OccurredAt: now,
+            CorrelationId: correlationId,
+            SubjectId: token.SubjectId,
+            Action: AuthorizationAction.AdjustInventory.ToString(),
+            Failure: decision.Failure ?? AuthorizationFailure.MissingRole,
+            Outcome: "Rejected"));
         return Results.StatusCode(StatusCodes.Status403Forbidden);
     });
 
 app.MapPost("/api/v1/tenants/{tenantId}/stores/{storeId}/devices/register",
-    (string tenantId, string storeId, HttpRequest request) =>
+    async (string tenantId, string storeId, HttpRequest request, IIdentityAuditEmitter auditEmitter) =>
     {
+        var correlationId = CorrelationId(request);
+        var now = DateTimeOffset.UtcNow;
         if (!TryReadToken(request, out var token))
         {
+            await auditEmitter.EmitTokenRejectedAsync(new(
+                EventId: Guid.NewGuid().ToString("N"),
+                AggregateId: $"tenant:{tenantId}:store:{storeId}",
+                TenantId: tenantId,
+                StoreId: storeId,
+                OccurredAt: now,
+                CorrelationId: correlationId,
+                SubjectId: null,
+                Action: AuthorizationAction.RegisterDevice.ToString(),
+                Failure: AuthorizationFailure.InvalidToken,
+                Outcome: "Rejected"));
             return Results.Unauthorized();
         }
 
         var decision = IdentityAuthorizationPolicy.Evaluate(
             token,
             new AuthorizationRequest(new TenantStoreScope(tenantId, storeId), AuthorizationAction.RegisterDevice),
-            DateTimeOffset.UtcNow);
+            now);
 
         if (decision.Allowed)
         {
+            await auditEmitter.EmitPrivilegedActionAsync(new(
+                EventId: Guid.NewGuid().ToString("N"),
+                AggregateId: token.SubjectId,
+                TenantId: token.TenantId,
+                StoreId: storeId,
+                OccurredAt: now,
+                CorrelationId: correlationId,
+                SubjectId: token.SubjectId,
+                PrincipalType: token.PrincipalType.ToString(),
+                Action: AuthorizationAction.RegisterDevice.ToString(),
+                Outcome: "Authorized"));
             return Results.Ok(new
             {
                 Outcome = "Authorized",
@@ -87,9 +158,31 @@ app.MapPost("/api/v1/tenants/{tenantId}/stores/{storeId}/devices/register",
 
         if (decision.Failure is AuthorizationFailure.ExpiredToken or AuthorizationFailure.InvalidToken or AuthorizationFailure.Revoked)
         {
+            await auditEmitter.EmitTokenRejectedAsync(new(
+                EventId: Guid.NewGuid().ToString("N"),
+                AggregateId: token.SubjectId,
+                TenantId: token.TenantId,
+                StoreId: storeId,
+                OccurredAt: now,
+                CorrelationId: correlationId,
+                SubjectId: token.SubjectId,
+                Action: AuthorizationAction.RegisterDevice.ToString(),
+                Failure: decision.Failure ?? AuthorizationFailure.InvalidToken,
+                Outcome: "Rejected"));
             return Results.Unauthorized();
         }
 
+        await auditEmitter.EmitTokenRejectedAsync(new(
+            EventId: Guid.NewGuid().ToString("N"),
+            AggregateId: token.SubjectId,
+            TenantId: token.TenantId,
+            StoreId: storeId,
+            OccurredAt: now,
+            CorrelationId: correlationId,
+            SubjectId: token.SubjectId,
+            Action: AuthorizationAction.RegisterDevice.ToString(),
+            Failure: decision.Failure ?? AuthorizationFailure.MissingRole,
+            Outcome: "Rejected"));
         return Results.StatusCode(StatusCodes.Status403Forbidden);
     });
 
@@ -154,3 +247,5 @@ static string? ReadHeader(HttpRequest request, string key)
 
     return null;
 }
+
+static string CorrelationId(HttpRequest request) => ReadHeader(request, "X-Correlation-Id") ?? Guid.NewGuid().ToString("N");

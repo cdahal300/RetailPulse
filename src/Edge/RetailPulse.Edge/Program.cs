@@ -5,14 +5,15 @@ var builder = WebApplication.CreateBuilder(args);
 var databasePath = builder.Configuration["RetailPulse:EdgeDatabasePath"] ?? Path.Combine(AppContext.BaseDirectory, "retailpulse-edge.db");
 builder.Services.AddSingleton<ILocalCheckoutPersistence>(_ => new SqliteCheckoutPersistence(databasePath));
 builder.Services.AddSingleton(_ => new BoundedAuthorizationSessionCache(TimeSpan.FromMinutes(15)));
+builder.Services.AddSingleton<IIdentityAuditEmitter, NoOpIdentityAuditEmitter>();
 var app = builder.Build();
 
 app.MapGet("/", () => "RetailPulse Edge");
 
 app.MapPost("/api/v1/edge/tenants/{tenantId}/stores/{storeId}/checkout",
-	(string tenantId, string storeId, HttpRequest request, BoundedAuthorizationSessionCache cache) =>
+	async (string tenantId, string storeId, HttpRequest request, BoundedAuthorizationSessionCache cache, IIdentityAuditEmitter auditEmitter) =>
 	{
-		var authorization = Authorize(request, new TenantStoreScope(tenantId, storeId), AuthorizationAction.ExecuteCheckout, cache);
+		var authorization = await AuthorizeAsync(request, new TenantStoreScope(tenantId, storeId), AuthorizationAction.ExecuteCheckout, cache, auditEmitter);
 		if (authorization.Result is not null)
 		{
 			return authorization.Result;
@@ -29,9 +30,9 @@ app.MapPost("/api/v1/edge/tenants/{tenantId}/stores/{storeId}/checkout",
 	});
 
 app.MapPost("/api/v1/edge/tenants/{tenantId}/stores/{storeId}/inventory/adjust",
-	(string tenantId, string storeId, HttpRequest request, BoundedAuthorizationSessionCache cache) =>
+	async (string tenantId, string storeId, HttpRequest request, BoundedAuthorizationSessionCache cache, IIdentityAuditEmitter auditEmitter) =>
 	{
-		var authorization = Authorize(request, new TenantStoreScope(tenantId, storeId), AuthorizationAction.AdjustInventory, cache);
+		var authorization = await AuthorizeAsync(request, new TenantStoreScope(tenantId, storeId), AuthorizationAction.AdjustInventory, cache, auditEmitter);
 		if (authorization.Result is not null)
 		{
 			return authorization.Result;
@@ -49,37 +50,84 @@ app.MapPost("/api/v1/edge/tenants/{tenantId}/stores/{storeId}/inventory/adjust",
 
 app.Run();
 
-static (IResult? Result, IdentityToken? Token) Authorize(HttpRequest request, TenantStoreScope scope, AuthorizationAction action, BoundedAuthorizationSessionCache cache)
+static async Task<(IResult? Result, IdentityToken? Token)> AuthorizeAsync(HttpRequest request, TenantStoreScope scope, AuthorizationAction action, BoundedAuthorizationSessionCache cache, IIdentityAuditEmitter auditEmitter)
 {
 	var now = DateTimeOffset.UtcNow;
+	var correlationId = CorrelationId(request);
 	if (TryReadToken(request, out var token))
 	{
 		var sessionId = ReadHeader(request, "X-RetailPulse-Session-Id") ?? token.SubjectId;
 		cache.Upsert(new CachedIdentitySession(sessionId, token, now, DateTimeOffset.MinValue));
-		return Evaluate(scope, action, token, now);
+		return await EvaluateAsync(scope, action, token, now, correlationId, auditEmitter);
 	}
 
 	var fallbackSessionId = ReadHeader(request, "X-RetailPulse-Session-Id");
 	if (!string.IsNullOrWhiteSpace(fallbackSessionId) && cache.TryGetValid(fallbackSessionId, now, out var cached))
 	{
-		return Evaluate(scope, action, cached.Token, now);
+		return await EvaluateAsync(scope, action, cached.Token, now, correlationId, auditEmitter);
 	}
+
+	await auditEmitter.EmitTokenRejectedAsync(new(
+		EventId: Guid.NewGuid().ToString("N"),
+		AggregateId: $"tenant:{scope.TenantId}:store:{scope.StoreId}",
+		TenantId: scope.TenantId,
+		StoreId: scope.StoreId,
+		OccurredAt: now,
+		CorrelationId: correlationId,
+		SubjectId: null,
+		Action: action.ToString(),
+		Failure: AuthorizationFailure.InvalidToken,
+		Outcome: "Rejected"));
 
 	return (Results.Unauthorized(), null);
 }
 
-static (IResult? Result, IdentityToken? Token) Evaluate(TenantStoreScope scope, AuthorizationAction action, IdentityToken token, DateTimeOffset now)
+static async Task<(IResult? Result, IdentityToken? Token)> EvaluateAsync(TenantStoreScope scope, AuthorizationAction action, IdentityToken token, DateTimeOffset now, string correlationId, IIdentityAuditEmitter auditEmitter)
 {
 	var decision = IdentityAuthorizationPolicy.Evaluate(token, new AuthorizationRequest(scope, action), now);
 	if (decision.Allowed)
 	{
+		await auditEmitter.EmitPrivilegedActionAsync(new(
+			EventId: Guid.NewGuid().ToString("N"),
+			AggregateId: token.SubjectId,
+			TenantId: token.TenantId,
+			StoreId: scope.StoreId,
+			OccurredAt: now,
+			CorrelationId: correlationId,
+			SubjectId: token.SubjectId,
+			PrincipalType: token.PrincipalType.ToString(),
+			Action: action.ToString(),
+			Outcome: "Authorized"));
 		return (null, token);
 	}
 
 	if (decision.Failure is AuthorizationFailure.ExpiredToken or AuthorizationFailure.InvalidToken or AuthorizationFailure.Revoked)
 	{
+		await auditEmitter.EmitTokenRejectedAsync(new(
+			EventId: Guid.NewGuid().ToString("N"),
+			AggregateId: token.SubjectId,
+			TenantId: token.TenantId,
+			StoreId: scope.StoreId,
+			OccurredAt: now,
+			CorrelationId: correlationId,
+			SubjectId: token.SubjectId,
+			Action: action.ToString(),
+			Failure: decision.Failure ?? AuthorizationFailure.InvalidToken,
+			Outcome: "Rejected"));
 		return (Results.Unauthorized(), null);
 	}
+
+	await auditEmitter.EmitTokenRejectedAsync(new(
+		EventId: Guid.NewGuid().ToString("N"),
+		AggregateId: token.SubjectId,
+		TenantId: token.TenantId,
+		StoreId: scope.StoreId,
+		OccurredAt: now,
+		CorrelationId: correlationId,
+		SubjectId: token.SubjectId,
+		Action: action.ToString(),
+		Failure: decision.Failure ?? AuthorizationFailure.MissingRole,
+		Outcome: "Rejected"));
 
 	return (Results.StatusCode(StatusCodes.Status403Forbidden), null);
 }
@@ -143,3 +191,5 @@ static string? ReadHeader(HttpRequest request, string key)
 
 	return null;
 }
+
+static string CorrelationId(HttpRequest request) => ReadHeader(request, "X-Correlation-Id") ?? Guid.NewGuid().ToString("N");

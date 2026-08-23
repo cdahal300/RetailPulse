@@ -1,5 +1,9 @@
 # FEAT-009: Manager and Owner PWA
 
+## Status
+
+In progress. The first MVP slice turns the starter portal into a manager dashboard that reads FEAT-010 sales report contracts when an API base URL is configured and otherwise uses clearly labeled simulated, non-sensitive fallback data.
+
 ## Outcome
 
 As a manager or owner, I want secure mobile access to store performance and operational actions without installing a native app.
@@ -10,6 +14,14 @@ As a manager or owner, I want secure mobile access to store performance and oper
 - Authentication, role-aware routes, push notifications, install manifest, and service worker.
 - Small non-sensitive read-only offline cache.
 - Authorized manager commands with pending and confirmed status.
+
+## MVP Dashboard Slice
+
+- Store selector for the current tenant pilot stores.
+- Sales KPI cards, hourly sales, top products, and operational readiness notes.
+- Data freshness/source/status indicators so simulated or cached data is never presented as fresh production data.
+- Basic install metadata and offline fallback page.
+- Production-only service worker registration to avoid stale assets during local Vite development.
 
 ## Acceptance criteria
 

@@ -11,6 +11,17 @@ Installable React and TypeScript Progressive Web App for store managers and owne
 - Receive operational notifications and deep-link users to the relevant screen.
 - Evaluate UI feature flags with safe defaults.
 
+## FEAT-009 MVP Slice
+
+The current manager dashboard reads FEAT-010 sales report contracts when `VITE_API_BASE_URL` is configured. If the API is unavailable or no API base URL is configured, it falls back to deterministic simulated, non-sensitive report data and labels the state clearly.
+
+```bash
+npm run dev -- --host 0.0.0.0
+VITE_API_BASE_URL=http://localhost:5011 npm run dev -- --host 0.0.0.0
+```
+
+The fallback path is for internal development only. Server-side authorization remains authoritative for live API calls.
+
 ## Not responsible for
 
 - Checkout or authoritative sale state

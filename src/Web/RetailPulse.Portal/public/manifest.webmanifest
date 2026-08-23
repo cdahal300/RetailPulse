@@ -1,0 +1,10 @@
+{
+  "name": "RetailPulse Manager",
+  "short_name": "RetailPulse",
+  "description": "Manager and owner dashboard for store performance and operations.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f6f1e8",
+  "theme_color": "#15352e",
+  "icons": []
+}

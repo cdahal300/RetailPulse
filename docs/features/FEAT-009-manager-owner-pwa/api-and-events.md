@@ -3,6 +3,7 @@
 ## APIs and commands
 
 - Queries: `GET /api/v1/me`, store-scoped sales/inventory/sync-health/insight endpoints, and notification preferences.
+- MVP sales query: `GET /api/v1/tenants/{tenantId}/stores/{storeId}/reports/sales` from FEAT-010. The PWA passes manager-scoped RetailPulse identity headers and displays freshness/source metadata from the response.
 - Commands: authorized manager commands use `POST /api/v1/stores/{storeId}/commands` with command type, payload, client command ID, and expected version.
 - Authentication and authorization: Entra-backed session and server-side role/store/tenant policy; PWA never trusts route visibility for authorization.
 - Idempotency behavior: client command ID plus store/user scope deduplicates retries; response includes pending, accepted, confirmed, or reviewable status.

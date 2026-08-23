@@ -12,3 +12,4 @@
 | RSK-008 | Cost exceeds pilot budget | Delivery or operating constraint | Proposed budgets, alerts, usage review | Product and platform | Open |
 | RSK-009 | Unclear market or fiscal obligations | Rework or launch delay | Decide market, tax, fiscal, retention scope | Product | Open |
 | RSK-010 | Feature flag drift | Inconsistent behavior | Owner, expiry, audit, deterministic edge fallback | Release | Open |
+| RSK-011 | Observability deferred after dev deployment | Slower diagnosis of AKS, sync, and checkout issues during early feature work | Keep health probes and GitHub deployment evidence active; complete FEAT-008 before production traffic or external pilot use | Platform | Open |

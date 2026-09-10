@@ -13,11 +13,12 @@ Installable React and TypeScript Progressive Web App for store managers and owne
 
 ## FEAT-009 MVP Slice
 
-The current manager dashboard reads FEAT-010 sales report contracts when `VITE_API_BASE_URL` is configured. If the API is unavailable or no API base URL is configured, it falls back to deterministic simulated, non-sensitive report data and labels the state clearly.
+The current manager dashboard reads FEAT-010 sales report contracts when both `VITE_API_BASE_URL` and the explicit local-only `VITE_DEMO_MODE=true` setting are configured. If the API is unavailable, demo mode is disabled, or no API base URL is configured, it falls back to deterministic simulated, non-sensitive report data and labels the state clearly. Production authentication is not implemented yet, so the PWA will not send synthetic identity headers unless demo mode is explicitly enabled.
 
 ```bash
 npm run dev -- --host 0.0.0.0
 VITE_API_BASE_URL=http://localhost:5011 npm run dev -- --host 0.0.0.0
+VITE_API_BASE_URL=http://localhost:5011 VITE_DEMO_MODE=true npm run dev -- --host 0.0.0.0
 ```
 
 The fallback path is for internal development only. Server-side authorization remains authoritative for live API calls.

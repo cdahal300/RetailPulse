@@ -5,6 +5,7 @@ var builder = WebApplication.CreateBuilder(args);
 var entraTenantId = builder.Configuration["Entra:TenantId"];
 var entraAudience = builder.Configuration["Entra:Audience"];
 var entraConfigured = !string.IsNullOrWhiteSpace(entraTenantId) && !string.IsNullOrWhiteSpace(entraAudience);
+var portalAllowedOrigin = builder.Configuration["Portal:AllowedOrigin"];
 
 if (entraConfigured)
 {
@@ -18,6 +19,14 @@ if (entraConfigured)
     builder.Services.AddAuthorization();
 }
 
+if (!string.IsNullOrWhiteSpace(portalAllowedOrigin))
+{
+    builder.Services.AddCors(options => options.AddPolicy("Portal", policy =>
+        policy.WithOrigins(portalAllowedOrigin)
+            .AllowAnyHeader()
+            .AllowAnyMethod()));
+}
+
 builder.Services.AddSingleton<IIdentityAuditEmitter, NoOpIdentityAuditEmitter>();
 builder.Services.AddSingleton<IIdentityLifecycleService, InMemoryIdentityLifecycleService>();
 builder.Services.AddSingleton<IIdentityRevocationStore, InMemoryIdentityRevocationStore>();
@@ -28,6 +37,11 @@ if (entraConfigured)
 {
     app.UseAuthentication();
     app.UseAuthorization();
+}
+
+if (!string.IsNullOrWhiteSpace(portalAllowedOrigin))
+{
+    app.UseCors("Portal");
 }
 
 app.UseHttpsRedirection();

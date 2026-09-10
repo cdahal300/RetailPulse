@@ -18,6 +18,7 @@ data:
   ASPNETCORE_URLS: "http://+:5000"
   Entra__TenantId: ""
   Entra__Audience: ""
+  Portal__AllowedOrigin: ""
 ---
 # NetworkPolicy: Deny all ingress by default
 apiVersion: networking.k8s.io/v1

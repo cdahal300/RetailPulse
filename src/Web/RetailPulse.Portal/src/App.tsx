@@ -70,6 +70,7 @@ const stores: StoreOption[] = [
 ]
 
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? ''
+const demoMode = import.meta.env.VITE_DEMO_MODE === 'true'
 const cacheKeyPrefix = 'retailpulse.analytics.sales'
 
 function App() {
@@ -129,8 +130,8 @@ function App() {
         <div className="session-card">
           <ShieldCheck size={18} />
           <div>
-            <strong>Manager session</strong>
-            <span>Store-scoped reports only</span>
+            <strong>{demoMode ? 'Demo manager session' : 'Secure manager session'}</strong>
+            <span>{demoMode ? 'Synthetic identity for local testing' : 'Identity provider session required'}</span>
           </div>
         </div>
       </aside>
@@ -256,8 +257,8 @@ function StatusPill({ state }: { state: DashboardState }) {
 }
 
 async function fetchSalesReport(storeId: string): Promise<SalesReport> {
-  if (!apiBaseUrl) {
-    throw new Error('VITE_API_BASE_URL is not configured')
+  if (!apiBaseUrl || !demoMode) {
+    throw new Error('Live identity session is not configured')
   }
 
   const issuedAt = new Date().toISOString()

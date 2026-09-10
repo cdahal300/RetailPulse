@@ -5,7 +5,8 @@ var builder = WebApplication.CreateBuilder(args);
 var entraTenantId = builder.Configuration["Entra:TenantId"];
 var entraAudience = builder.Configuration["Entra:Audience"];
 var entraConfigured = !string.IsNullOrWhiteSpace(entraTenantId) && !string.IsNullOrWhiteSpace(entraAudience);
-var portalAllowedOrigin = builder.Configuration["Portal:AllowedOrigin"];
+var portalAllowedOrigins = builder.Configuration["Portal:AllowedOrigins"]?
+    .Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries) ?? [];
 
 if (entraConfigured)
 {
@@ -19,10 +20,10 @@ if (entraConfigured)
     builder.Services.AddAuthorization();
 }
 
-if (!string.IsNullOrWhiteSpace(portalAllowedOrigin))
+if (portalAllowedOrigins.Length > 0)
 {
     builder.Services.AddCors(options => options.AddPolicy("Portal", policy =>
-        policy.WithOrigins(portalAllowedOrigin)
+        policy.WithOrigins(portalAllowedOrigins)
             .AllowAnyHeader()
             .AllowAnyMethod()));
 }
@@ -39,7 +40,7 @@ if (entraConfigured)
     app.UseAuthorization();
 }
 
-if (!string.IsNullOrWhiteSpace(portalAllowedOrigin))
+if (portalAllowedOrigins.Length > 0)
 {
     app.UseCors("Portal");
 }

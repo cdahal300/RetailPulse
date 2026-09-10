@@ -73,11 +73,11 @@ spec:
             configMapKeyRef:
               name: retailpulse-config
               key: Entra__Audience
-        - name: Portal__AllowedOrigin
+        - name: Portal__AllowedOrigins
           valueFrom:
             configMapKeyRef:
               name: retailpulse-config
-              key: Portal__AllowedOrigin
+              key: Portal__AllowedOrigins
         - name: ConnectionStrings__Postgres
           valueFrom:
             secretKeyRef:

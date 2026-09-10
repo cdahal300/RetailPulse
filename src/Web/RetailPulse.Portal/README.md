@@ -23,6 +23,28 @@ VITE_API_BASE_URL=http://localhost:5011 VITE_DEMO_MODE=true npm run dev -- --hos
 
 The fallback path is for internal development only. Server-side authorization remains authoritative for live API calls.
 
+## Authentication Configuration
+
+For a real Entra ID session, configure these Vite variables at build time:
+
+```bash
+VITE_ENTRA_CLIENT_ID=<application-client-id>
+VITE_ENTRA_TENANT_ID=<tenant-id>
+VITE_ENTRA_API_SCOPE=api://<application-client-id>/access_as_user
+VITE_ENTRA_REDIRECT_URI=https://<portal-host>/
+```
+
+The browser shows a sign-in gate when Entra configuration is present but no session exists. `VITE_DEMO_MODE=true` is intended only for local synthetic data testing and must not be used for a production build.
+
+The Cloud API must also be configured with matching server-side settings:
+
+```bash
+Entra__TenantId=<tenant-id>
+Entra__Audience=api://<application-client-id>
+```
+
+When those settings are present, the API validates issuer, audience, signature, expiry, tenant, store, and role claims before applying its existing authorization policy. Without them, the local header-based test harness remains available but should not be used as a production authentication path.
+
 ## Not responsible for
 
 - Checkout or authoritative sale state

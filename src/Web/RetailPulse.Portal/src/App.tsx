@@ -15,6 +15,7 @@ import {
   Wifi,
 } from 'lucide-react'
 import { useEffect, useState } from 'react'
+import { entraConfigured, getPortalSession, signIn, signOut, type PortalSession } from './auth'
 import './App.css'
 
 type StoreOption = {
@@ -79,6 +80,21 @@ function App() {
   const [report, setReport] = useState<SalesReport>(() => fallbackReport(storeId))
   const [dashboardState, setDashboardState] = useState<DashboardState>('loading')
   const [lastError, setLastError] = useState<string | null>(null)
+  const [session, setSession] = useState<PortalSession | null>(null)
+  const [authLoading, setAuthLoading] = useState(!demoMode && entraConfigured)
+  const [authError, setAuthError] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (demoMode || !entraConfigured) {
+      setAuthLoading(false)
+      return
+    }
+
+    void getPortalSession()
+      .then(setSession)
+      .catch((error: unknown) => setAuthError(error instanceof Error ? error.message : 'Unable to restore secure session'))
+      .finally(() => setAuthLoading(false))
+  }, [])
 
   useEffect(() => {
     let cancelled = false
@@ -89,7 +105,7 @@ function App() {
       const cached = readCachedReport(storeId)
 
       try {
-        const fresh = await fetchSalesReport(storeId)
+        const fresh = await fetchSalesReport(storeId, session?.accessToken)
         if (cancelled) return
         setReport(fresh)
         setDashboardState('fresh')
@@ -106,7 +122,22 @@ function App() {
     return () => {
       cancelled = true
     }
-  }, [storeId, refreshKey])
+  }, [session, storeId, refreshKey])
+
+  if (!demoMode && entraConfigured && !session) {
+    return (
+      <main className="auth-gate">
+        <div className="auth-gate-mark">RP</div>
+        <p className="eyebrow">RetailPulse Manager</p>
+        <h1>{authLoading ? 'Checking your session' : 'Sign in to your workspace'}</h1>
+        <p>{authLoading ? 'Restoring your secure Entra ID session.' : 'Your identity and store permissions are required before reports can be shown.'}</p>
+        {authError ? <p className="inline-alert"><CloudOff size={16} />{authError}</p> : null}
+        <button className="session-button auth-gate-button" type="button" disabled={authLoading} onClick={() => void handleSignIn(setSession, setAuthError, setAuthLoading)}>
+          {authLoading ? 'Checking session...' : 'Sign in with Entra ID'}
+        </button>
+      </main>
+    )
+  }
 
   const selectedStore = stores.find((store) => store.id === storeId) ?? stores[0]
   const maxHourlySales = Math.max(...report.hourlySales.map((hour) => hour.netSalesMinor), 1)
@@ -130,10 +161,16 @@ function App() {
         <div className="session-card">
           <ShieldCheck size={18} />
           <div>
-            <strong>{demoMode ? 'Demo manager session' : 'Secure manager session'}</strong>
-            <span>{demoMode ? 'Synthetic identity for local testing' : 'Identity provider session required'}</span>
+            <strong>{demoMode ? 'Demo manager session' : session ? (session.account.name ?? 'Secure manager session') : 'Secure manager session'}</strong>
+            <span>{demoMode ? 'Synthetic identity for local testing' : session ? 'Entra ID authenticated' : 'Identity provider session required'}</span>
           </div>
         </div>
+        {!demoMode && entraConfigured ? (
+          <button className="session-button" type="button" disabled={authLoading} onClick={() => void handleSignIn(setSession, setAuthError, setAuthLoading)}>
+            {authLoading ? 'Checking session...' : session ? 'Refresh session' : 'Sign in with Entra ID'}
+          </button>
+        ) : null}
+        {session ? <button className="sign-out-button" type="button" onClick={() => void handleSignOut(setSession, setAuthError)}>Sign out</button> : null}
       </aside>
 
       <section className="workspace" aria-label="Manager dashboard">
@@ -169,6 +206,7 @@ function App() {
           <span>Last event: {formatTime(report.summary.freshness.lastSourceEventAt)}</span>
         </section>
 
+        {authError ? <p className="inline-alert"><CloudOff size={16} />{authError}</p> : null}
         {lastError ? <p className="inline-alert"><CloudOff size={16} />Using cached or built-in simulated data: {lastError}</p> : null}
 
         <section className="kpi-grid" aria-label="Sales summary">
@@ -256,16 +294,15 @@ function StatusPill({ state }: { state: DashboardState }) {
   return <strong className={`status-pill ${state}`}>{label}</strong>
 }
 
-async function fetchSalesReport(storeId: string): Promise<SalesReport> {
-  if (!apiBaseUrl || !demoMode) {
+async function fetchSalesReport(storeId: string, accessToken?: string): Promise<SalesReport> {
+  if (!apiBaseUrl || (!demoMode && !accessToken)) {
     throw new Error('Live identity session is not configured')
   }
 
   const issuedAt = new Date().toISOString()
   const expiresAt = new Date(Date.now() + 60 * 60 * 1000).toISOString()
   const url = `${apiBaseUrl.replace(/\/$/, '')}/api/v1/tenants/tenant-1/stores/${storeId}/reports/sales?from=2026-08-23T00:00:00Z&to=2026-08-24T00:00:00Z&timezone=UTC&currency=USD`
-  const response = await fetch(url, {
-    headers: {
+  const headers: Record<string, string> = demoMode ? {
       'X-RetailPulse-Token-Id': `portal-${storeId}-${Date.now()}`,
       'X-RetailPulse-Subject-Id': 'manager-portal',
       'X-RetailPulse-Tenant-Id': 'tenant-1',
@@ -275,14 +312,39 @@ async function fetchSalesReport(storeId: string): Promise<SalesReport> {
       'X-RetailPulse-Issued-At': issuedAt,
       'X-RetailPulse-Expires-At': expiresAt,
       'X-Correlation-Id': `portal-${crypto.randomUUID()}`,
-    },
-  })
+  } : { Authorization: `Bearer ${accessToken}`, 'X-Correlation-Id': `portal-${crypto.randomUUID()}` }
+  const response = await fetch(url, { headers })
 
   if (!response.ok) {
     throw new Error(`Analytics API returned HTTP ${response.status}`)
   }
 
   return await response.json() as SalesReport
+}
+
+async function handleSignIn(
+  setSession: (session: PortalSession | null) => void,
+  setAuthError: (error: string | null) => void,
+  setAuthLoading: (loading: boolean) => void,
+) {
+  setAuthLoading(true)
+  setAuthError(null)
+  try {
+    setSession(await signIn())
+  } catch (error) {
+    setAuthError(error instanceof Error ? error.message : 'Unable to sign in')
+  } finally {
+    setAuthLoading(false)
+  }
+}
+
+async function handleSignOut(setSession: (session: PortalSession | null) => void, setAuthError: (error: string | null) => void) {
+  try {
+    await signOut()
+    setSession(null)
+  } catch (error) {
+    setAuthError(error instanceof Error ? error.message : 'Unable to sign out')
+  }
 }
 
 function fallbackReport(storeId: string): SalesReport {

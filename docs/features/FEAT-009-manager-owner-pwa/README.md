@@ -22,6 +22,7 @@ As a manager or owner, I want secure mobile access to store performance and oper
 - Data freshness/source/status indicators so simulated or cached data is never presented as fresh production data.
 - Basic install metadata and offline fallback page.
 - Production-only service worker registration to avoid stale assets during local Vite development.
+- Configurable Entra/MSAL browser session with a sign-in gate; synthetic manager identity is limited to explicit local demo mode.
 
 ## Acceptance criteria
 

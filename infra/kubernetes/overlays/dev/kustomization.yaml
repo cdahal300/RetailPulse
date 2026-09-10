@@ -41,6 +41,12 @@ patches:
       - op: replace
         path: /data/ASPNETCORE_URLS
         value: http://+:5000
+      - op: replace
+        path: /data/Entra__TenantId
+        value: 84461914-7d3c-452f-bcff-cab760563700
+      - op: replace
+        path: /data/Entra__Audience
+        value: api://7ce3d38f-1736-449d-bff7-d5988972f859
   # Reduce replicas for development
   - target:
       kind: HorizontalPodAutoscaler

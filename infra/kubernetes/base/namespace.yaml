@@ -16,6 +16,8 @@ metadata:
 data:
   ASPNETCORE_ENVIRONMENT: Production
   ASPNETCORE_URLS: "http://+:5000"
+  Entra__TenantId: ""
+  Entra__Audience: ""
 ---
 # NetworkPolicy: Deny all ingress by default
 apiVersion: networking.k8s.io/v1

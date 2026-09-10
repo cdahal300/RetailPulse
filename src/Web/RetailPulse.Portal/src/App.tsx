@@ -132,7 +132,7 @@ function App() {
         <h1>{authLoading ? 'Checking your session' : 'Sign in to your workspace'}</h1>
         <p>{authLoading ? 'Restoring your secure Entra ID session.' : 'Your identity and store permissions are required before reports can be shown.'}</p>
         {authError ? <p className="inline-alert"><CloudOff size={16} />{authError}</p> : null}
-        <button className="session-button auth-gate-button" type="button" disabled={authLoading} onClick={() => void handleSignIn(setSession, setAuthError, setAuthLoading)}>
+        <button className="session-button auth-gate-button" type="button" disabled={authLoading} onClick={() => void handleSignIn(setAuthError, setAuthLoading)}>
           {authLoading ? 'Checking session...' : 'Sign in with Entra ID'}
         </button>
       </main>
@@ -166,7 +166,7 @@ function App() {
           </div>
         </div>
         {!demoMode && entraConfigured ? (
-          <button className="session-button" type="button" disabled={authLoading} onClick={() => void handleSignIn(setSession, setAuthError, setAuthLoading)}>
+          <button className="session-button" type="button" disabled={authLoading} onClick={() => void handleSignIn(setAuthError, setAuthLoading)}>
             {authLoading ? 'Checking session...' : session ? 'Refresh session' : 'Sign in with Entra ID'}
           </button>
         ) : null}
@@ -330,14 +330,13 @@ async function fetchSalesReport(storeId: string, accessToken?: string): Promise<
 }
 
 async function handleSignIn(
-  setSession: (session: PortalSession | null) => void,
   setAuthError: (error: string | null) => void,
   setAuthLoading: (loading: boolean) => void,
 ) {
   setAuthLoading(true)
   setAuthError(null)
   try {
-    setSession(await withTimeout(signIn(), 30000))
+    await withTimeout(signIn(), 30000)
   } catch (error) {
     setAuthError(error instanceof Error ? error.message : 'Unable to sign in. Allow popups for localhost:5173 and retry.')
   } finally {

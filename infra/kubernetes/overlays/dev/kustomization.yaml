@@ -47,6 +47,9 @@ patches:
       - op: replace
         path: /data/Entra__Audience
         value: api://7ce3d38f-1736-449d-bff7-d5988972f859
+      - op: replace
+        path: /data/Portal__AllowedOrigin
+        value: http://localhost:5173
   # Reduce replicas for development
   - target:
       kind: HorizontalPodAutoscaler

@@ -38,7 +38,6 @@ async function getMsalClient() {
     initializePromise = (async () => {
       const client = new PublicClientApplication(msalConfig)
       await client.initialize()
-      await client.handleRedirectPromise()
       msalClient = client
       return client
     })()
@@ -48,9 +47,18 @@ async function getMsalClient() {
 }
 
 export async function signIn(): Promise<PortalSession> {
-  const client = await getMsalClient()
-  const result = await client.loginPopup({ scopes: [apiScope] })
-  return toSession(client, result)
+  try {
+    const client = await getMsalClient()
+    const result = await client.loginPopup({ scopes: [apiScope] })
+    return toSession(client, result)
+  } catch (error) {
+    if (!isTokenRequestCacheError(error)) throw error
+    clearMsalInteractionState()
+    resetMsalClient()
+    const client = await getMsalClient()
+    const result = await client.loginPopup({ scopes: [apiScope] })
+    return toSession(client, result)
+  }
 }
 
 export async function signOut() {
@@ -59,17 +67,44 @@ export async function signOut() {
 }
 
 export async function getPortalSession(): Promise<PortalSession | null> {
-  const client = await getMsalClient()
-  const account = client.getActiveAccount() ?? client.getAllAccounts()[0]
-  if (!account) return null
+  try {
+    const client = await getMsalClient()
+    const account = client.getActiveAccount() ?? client.getAllAccounts()[0]
+    if (!account) return null
 
-  client.setActiveAccount(account)
-  const request: SilentRequest = { account, scopes: [apiScope] }
-  const result = await client.acquireTokenSilent(request)
-  return toSession(client, result)
+    client.setActiveAccount(account)
+    const request: SilentRequest = { account, scopes: [apiScope] }
+    const result = await client.acquireTokenSilent(request)
+    return toSession(client, result)
+  } catch (error) {
+    if (!isTokenRequestCacheError(error)) throw error
+    clearMsalInteractionState()
+    resetMsalClient()
+    return null
+  }
 }
 
 function toSession(client: PublicClientApplication, result: AuthenticationResult): PortalSession {
   client.setActiveAccount(result.account)
   return { account: result.account, accessToken: result.accessToken }
+}
+
+function isTokenRequestCacheError(error: unknown) {
+  return error instanceof Error && error.message.includes('no_token_request_cache_error')
+}
+
+function clearMsalInteractionState() {
+  for (const storage of [window.sessionStorage, window.localStorage]) {
+    for (let index = storage.length - 1; index >= 0; index -= 1) {
+      const key = storage.key(index)
+      if (key?.toLowerCase().includes('msal.interaction')) {
+        storage.removeItem(key)
+      }
+    }
+  }
+}
+
+function resetMsalClient() {
+  msalClient = null
+  initializePromise = null
 }

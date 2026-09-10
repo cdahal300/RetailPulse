@@ -38,6 +38,15 @@ async function getMsalClient() {
     initializePromise = (async () => {
       const client = new PublicClientApplication(msalConfig)
       await client.initialize()
+      try {
+        const redirectResult = await client.handleRedirectPromise()
+        if (redirectResult?.account) {
+          client.setActiveAccount(redirectResult.account)
+        }
+      } catch (error) {
+        if (!isTokenRequestCacheError(error)) throw error
+        clearMsalInteractionState()
+      }
       msalClient = client
       return client
     })()
@@ -46,24 +55,14 @@ async function getMsalClient() {
   return msalClient ?? await initializePromise
 }
 
-export async function signIn(): Promise<PortalSession> {
-  try {
-    const client = await getMsalClient()
-    const result = await client.loginPopup({ scopes: [apiScope] })
-    return toSession(client, result)
-  } catch (error) {
-    if (!isTokenRequestCacheError(error)) throw error
-    clearMsalInteractionState()
-    resetMsalClient()
-    const client = await getMsalClient()
-    const result = await client.loginPopup({ scopes: [apiScope] })
-    return toSession(client, result)
-  }
+export async function signIn(): Promise<void> {
+  const client = await getMsalClient()
+  await client.loginRedirect({ scopes: [apiScope] })
 }
 
 export async function signOut() {
   const client = await getMsalClient()
-  await client.logoutPopup({ account: client.getActiveAccount() ?? undefined })
+  await client.logoutRedirect({ account: client.getActiveAccount() ?? undefined })
 }
 
 export async function getPortalSession(): Promise<PortalSession | null> {
@@ -108,3 +107,4 @@ function resetMsalClient() {
   msalClient = null
   initializePromise = null
 }
+

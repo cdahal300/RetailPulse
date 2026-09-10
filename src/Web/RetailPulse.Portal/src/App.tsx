@@ -90,7 +90,7 @@ function App() {
       return
     }
 
-    void getPortalSession()
+    void withTimeout(getPortalSession(), 5000)
       .then(setSession)
       .catch((error: unknown) => setAuthError(error instanceof Error ? error.message : 'Unable to restore secure session'))
       .finally(() => setAuthLoading(false))
@@ -278,6 +278,13 @@ function App() {
   )
 }
 
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timeout = window.setTimeout(() => reject(new Error('Secure session check timed out')), timeoutMs)
+    promise.then(resolve, reject).finally(() => window.clearTimeout(timeout))
+  })
+}
+
 function Metric({ label, value, trend, icon }: { label: string; value: string; trend: string; icon: React.ReactNode }) {
   return (
     <article className="metric-card">
@@ -330,9 +337,9 @@ async function handleSignIn(
   setAuthLoading(true)
   setAuthError(null)
   try {
-    setSession(await signIn())
+    setSession(await withTimeout(signIn(), 30000))
   } catch (error) {
-    setAuthError(error instanceof Error ? error.message : 'Unable to sign in')
+    setAuthError(error instanceof Error ? error.message : 'Unable to sign in. Allow popups for localhost:5173 and retry.')
   } finally {
     setAuthLoading(false)
   }

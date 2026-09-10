@@ -63,6 +63,16 @@ spec:
             configMapKeyRef:
               name: retailpulse-config
               key: ASPNETCORE_ENVIRONMENT
+        - name: Entra__TenantId
+          valueFrom:
+            configMapKeyRef:
+              name: retailpulse-config
+              key: Entra__TenantId
+        - name: Entra__Audience
+          valueFrom:
+            configMapKeyRef:
+              name: retailpulse-config
+              key: Entra__Audience
         - name: ConnectionStrings__Postgres
           valueFrom:
             secretKeyRef:

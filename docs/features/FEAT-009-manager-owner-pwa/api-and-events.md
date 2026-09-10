@@ -5,7 +5,7 @@
 - Queries: `GET /api/v1/me`, store-scoped sales/inventory/sync-health/insight endpoints, and notification preferences.
 - MVP sales query: `GET /api/v1/tenants/{tenantId}/stores/{storeId}/reports/sales` from FEAT-010. The PWA passes manager-scoped RetailPulse identity headers and displays freshness/source metadata from the response.
 - Commands: authorized manager commands use `POST /api/v1/stores/{storeId}/commands` with command type, payload, client command ID, and expected version.
-- Authentication and authorization: Entra-backed session and server-side role/store/tenant policy; PWA never trusts route visibility for authorization.
+- Authentication and authorization: configurable MSAL browser session for Entra ID plus server-side role/store/tenant policy; PWA never trusts route visibility for authorization. Synthetic manager headers are limited to explicit local `VITE_DEMO_MODE=true`.
 - Idempotency behavior: client command ID plus store/user scope deduplicates retries; response includes pending, accepted, confirmed, or reviewable status.
 - Error model: stable unauthenticated, forbidden, stale, validation, offline, transient, and reviewable states safe for user display.
 
@@ -14,6 +14,8 @@
 - No new public domain event is required for the PWA. It consumes existing read models and notifications; command side effects publish events owned by their domain.
 - Notification delivery may use `LowStockDetected.v1`, `SyncStatusChanged.v1`, and approved operational events.
 - Ownership: PWA owns presentation/cache contracts; cloud domains own authorization, command, and event semantics.
+
+The Cloud API validates Entra bearer tokens when `Entra__TenantId` and `Entra__Audience` are configured. Required claims are mapped into the existing RetailPulse tenant/store/role authorization policy; the PWA must not use client-only role checks as an authorization boundary.
 
 ## Compatibility
 

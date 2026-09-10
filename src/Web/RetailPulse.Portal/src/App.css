@@ -89,6 +89,41 @@
 	line-height: 1.35;
 }
 
+.session-button,
+.sign-out-button {
+	border: 0;
+	border-radius: 8px;
+	padding: 11px 12px;
+	font: inherit;
+	font-size: 13px;
+	font-weight: 700;
+	cursor: pointer;
+}
+
+.session-button {
+	background: #f3b35d;
+	color: #15352e;
+}
+
+.session-button:hover {
+	background: #ffd08b;
+}
+
+.session-button:disabled {
+	cursor: wait;
+	opacity: 0.65;
+}
+
+.sign-out-button {
+	background: transparent;
+	color: #dce9df;
+	text-align: left;
+}
+
+.sign-out-button:hover {
+	background: #244c42;
+}
+
 .workspace {
 	min-width: 0;
 	padding: 30px;
@@ -368,6 +403,52 @@ select {
 	margin-top: 7px;
 	border-radius: 50%;
 	background: #2f654e;
+}
+
+.auth-gate {
+	min-height: 100vh;
+	display: grid;
+	place-content: center;
+	gap: 14px;
+	padding: 30px;
+	background:
+		radial-gradient(circle at 75% 20%, rgba(243, 179, 93, 0.3), transparent 32%),
+		#15352e;
+	color: #f6f1e8;
+}
+
+.auth-gate > * {
+	max-width: 440px;
+}
+
+.auth-gate .eyebrow {
+	color: #f3b35d;
+}
+
+.auth-gate h1 {
+	color: #ffffff;
+	font-size: clamp(34px, 6vw, 58px);
+}
+
+.auth-gate p:not(.eyebrow):not(.inline-alert) {
+	color: #bdd8c5;
+}
+
+.auth-gate-mark {
+	width: 52px;
+	height: 52px;
+	display: grid;
+	place-items: center;
+	border-radius: 8px;
+	background: #f3b35d;
+	color: #15352e;
+	font-size: 18px;
+	font-weight: 900;
+}
+
+.auth-gate-button {
+	width: fit-content;
+	margin-top: 10px;
 }
 
 @media (max-width: 900px) {

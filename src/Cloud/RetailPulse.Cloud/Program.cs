@@ -1,12 +1,35 @@
 using RetailPulse.BuildingBlocks;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
 
 var builder = WebApplication.CreateBuilder(args);
+var entraTenantId = builder.Configuration["Entra:TenantId"];
+var entraAudience = builder.Configuration["Entra:Audience"];
+var entraConfigured = !string.IsNullOrWhiteSpace(entraTenantId) && !string.IsNullOrWhiteSpace(entraAudience);
+
+if (entraConfigured)
+{
+    builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+        .AddJwtBearer(options =>
+        {
+            options.Authority = $"https://login.microsoftonline.com/{entraTenantId}/v2.0";
+            options.Audience = entraAudience;
+            options.RequireHttpsMetadata = true;
+        });
+    builder.Services.AddAuthorization();
+}
+
 builder.Services.AddSingleton<IIdentityAuditEmitter, NoOpIdentityAuditEmitter>();
 builder.Services.AddSingleton<IIdentityLifecycleService, InMemoryIdentityLifecycleService>();
 builder.Services.AddSingleton<IIdentityRevocationStore, InMemoryIdentityRevocationStore>();
 builder.Services.AddSingleton<IAnalyticsReportProvider, SimulatedAnalyticsReportProvider>();
 
 var app = builder.Build();
+if (entraConfigured)
+{
+    app.UseAuthentication();
+    app.UseAuthorization();
+}
+
 app.UseHttpsRedirection();
 
 // Health check endpoints for Kubernetes readiness and liveness probes
@@ -245,6 +268,11 @@ static async Task<(IResult? Result, IdentityToken? Token)> AuthorizeAsync(HttpRe
 static bool TryReadToken(HttpRequest request, out IdentityToken token)
 {
     token = default!;
+    if (request.HttpContext.User.Identity?.IsAuthenticated == true && TryReadBearerToken(request.HttpContext.User, out token))
+    {
+        return true;
+    }
+
     var tokenId = ReadHeader(request, "X-RetailPulse-Token-Id");
     var subjectId = ReadHeader(request, "X-RetailPulse-Subject-Id");
     var tenantId = ReadHeader(request, "X-RetailPulse-Tenant-Id");
@@ -290,6 +318,37 @@ static bool TryReadToken(HttpRequest request, out IdentityToken token)
 
     token = new IdentityToken(tokenId, principalType, subjectId, tenantId, storeId, parsedRoles, issuedAt, expiresAt);
     return true;
+}
+
+static bool TryReadBearerToken(System.Security.Claims.ClaimsPrincipal principal, out IdentityToken token)
+{
+    token = default!;
+    var subjectId = principal.FindFirst("oid")?.Value ?? principal.FindFirst("sub")?.Value;
+    var tenantId = principal.FindFirst("tid")?.Value;
+    var storeId = principal.FindFirst("store_id")?.Value ?? principal.FindFirst("storeId")?.Value;
+    var tokenId = principal.FindFirst("jti")?.Value ?? subjectId;
+    var issuedAt = ReadUnixClaim(principal, "iat") ?? DateTimeOffset.UtcNow;
+    var expiresAt = ReadUnixClaim(principal, "exp") ?? DateTimeOffset.UtcNow.AddMinutes(5);
+    var roleValues = principal.FindAll("roles").Select(claim => claim.Value)
+        .Concat(principal.FindAll("role").Select(claim => claim.Value))
+        .Distinct(StringComparer.OrdinalIgnoreCase)
+        .ToArray();
+
+    if (string.IsNullOrWhiteSpace(subjectId) || string.IsNullOrWhiteSpace(tenantId) || string.IsNullOrWhiteSpace(tokenId) || roleValues.Length == 0 ||
+        !roleValues.All(value => Enum.TryParse<IdentityRole>(value, ignoreCase: true, out _)))
+    {
+        return false;
+    }
+
+    var roles = roleValues.Select(value => Enum.Parse<IdentityRole>(value, ignoreCase: true)).ToArray();
+    token = new IdentityToken(tokenId, IdentityPrincipalType.User, subjectId, tenantId, storeId, roles, issuedAt, expiresAt);
+    return true;
+}
+
+static DateTimeOffset? ReadUnixClaim(System.Security.Claims.ClaimsPrincipal principal, string claimType)
+{
+    var value = principal.FindFirst(claimType)?.Value;
+    return long.TryParse(value, out var seconds) ? DateTimeOffset.FromUnixTimeSeconds(seconds) : null;
 }
 
 static string? ReadHeader(HttpRequest request, string key)

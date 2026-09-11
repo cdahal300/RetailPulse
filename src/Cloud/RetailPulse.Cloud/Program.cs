@@ -1,5 +1,7 @@
 using RetailPulse.BuildingBlocks;
+using RetailPulse.Cloud;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using System.Text;
 
 var builder = WebApplication.CreateBuilder(args);
 var entraTenantId = builder.Configuration["Entra:TenantId"];
@@ -16,6 +18,9 @@ if (entraConfigured)
             options.Authority = $"https://login.microsoftonline.com/{entraTenantId}/v2.0";
             options.Audience = entraAudience;
             options.RequireHttpsMetadata = true;
+            options.MapInboundClaims = false;
+            options.TokenValidationParameters.RoleClaimType = "roles";
+            options.TokenValidationParameters.NameClaimType = "name";
         });
     builder.Services.AddAuthorization();
 }
@@ -31,6 +36,16 @@ if (portalAllowedOrigins.Length > 0)
 builder.Services.AddSingleton<IIdentityAuditEmitter, NoOpIdentityAuditEmitter>();
 builder.Services.AddSingleton<IIdentityLifecycleService, InMemoryIdentityLifecycleService>();
 builder.Services.AddSingleton<IIdentityRevocationStore, InMemoryIdentityRevocationStore>();
+builder.Services.AddSingleton<ICatalogRepository, CloudCatalogRepository>();
+var cloudDatabasePath = builder.Configuration["RetailPulse:CloudDatabasePath"] ?? Path.Combine(AppContext.BaseDirectory, "retailpulse-cloud.db");
+var postgresConnectionString = builder.Configuration.GetConnectionString("Postgres");
+var useSqliteCloudLedger = builder.Configuration.GetValue<bool>("RetailPulse:UseSqliteCloudLedger");
+builder.Services.AddSingleton<IInventoryLedgerRepository>(_ => useSqliteCloudLedger || string.IsNullOrWhiteSpace(postgresConnectionString)
+    ? new SqliteInventoryLedger(cloudDatabasePath)
+    : new PostgresInventoryLedger(postgresConnectionString));
+builder.Services.AddSingleton<ICatalogInventoryAuthorization, CloudInventoryAuthorization>();
+builder.Services.AddSingleton<CatalogInventoryService>();
+builder.Services.AddSingleton<IInventoryCommandService, InMemoryInventoryCommandService>();
 builder.Services.AddSingleton<IAnalyticsReportProvider, SimulatedAnalyticsReportProvider>();
 
 var app = builder.Build();
@@ -107,7 +122,7 @@ app.MapGet("/api/v1/tenants/{tenantId}/stores/{storeId}/reports/sales",
     });
 
 app.MapPost("/api/v1/tenants/{tenantId}/stores/{storeId}/manager/inventory-adjustments",
-    async (string tenantId, string storeId, HttpRequest request, IIdentityAuditEmitter auditEmitter, IIdentityRevocationStore revocations) =>
+    async (string tenantId, string storeId, HttpRequest request, IIdentityAuditEmitter auditEmitter, IIdentityRevocationStore revocations, IInventoryCommandService inventoryCommands) =>
     {
         var authorization = await AuthorizeAsync(request, new TenantStoreScope(tenantId, storeId), AuthorizationAction.AdjustInventory, auditEmitter, revocations);
         if (authorization.Result is not null)
@@ -116,13 +131,39 @@ app.MapPost("/api/v1/tenants/{tenantId}/stores/{storeId}/manager/inventory-adjus
         }
 
         var token = authorization.Token!;
+        if (request.ContentLength is null or 0)
+        {
+            return Results.BadRequest(new { Error = "An inventory adjustment command body is required." });
+        }
+
+        var command = await request.ReadFromJsonAsync<InventoryAdjustmentRequest>(request.HttpContext.RequestAborted);
+        if (command is null || string.IsNullOrWhiteSpace(command.ProductId) || string.IsNullOrWhiteSpace(command.Reason) || string.IsNullOrWhiteSpace(command.CommandId) || command.QuantityDelta == 0 || command.ExpectedVersion < 0)
+        {
+            return Results.BadRequest(new { Error = "ProductId, non-zero QuantityDelta, Reason, CommandId, and non-negative ExpectedVersion are required." });
+        }
+
+        var result = await inventoryCommands.AdjustInventoryAsync(new InventoryAdjustmentCommand(
+            tenantId,
+            storeId,
+            command.ProductId,
+            command.QuantityDelta,
+            command.Reason,
+            command.CommandId,
+            command.ExpectedVersion,
+            token.SubjectId,
+            CorrelationId(request),
+            DateTimeOffset.UtcNow),
+            request.HttpContext.RequestAborted);
+
+        if (result.Outcome == ManagerCommandOutcome.Reviewable)
+        {
+            return Results.Conflict(new { result.Outcome, result.Error });
+        }
+
         return Results.Ok(new
         {
-            Outcome = "Authorized",
-            TenantId = tenantId,
-            StoreId = storeId,
-            ActorId = token.SubjectId,
-            Action = AuthorizationAction.AdjustInventory.ToString()
+            Outcome = result.Outcome.ToString(),
+            Event = result.Event
         });
     });
 
@@ -207,6 +248,48 @@ app.MapPost("/api/v1/tenants/{tenantId}/stores/{storeId}/users/{subjectId}/roles
 
 app.Run();
 
+static string? ResolveStoreIdFromGroup(string? groupId)
+{
+    if (string.IsNullOrWhiteSpace(groupId))
+    {
+        return null;
+    }
+
+    var raw = Environment.GetEnvironmentVariable("RetailPulse_StoreGroupMap") ?? string.Empty;
+    foreach (var segment in raw.Split(';', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries))
+    {
+        var parts = segment.Split('=', 2, StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length == 2 && string.Equals(parts[0], groupId, StringComparison.OrdinalIgnoreCase) &&
+            !string.IsNullOrWhiteSpace(parts[1]))
+        {
+            return parts[1];
+        }
+    }
+
+    return null;
+}
+
+static string? ResolveTenantId(string? tenantId)
+{
+    if (string.IsNullOrWhiteSpace(tenantId))
+    {
+        return null;
+    }
+
+    var raw = Environment.GetEnvironmentVariable("RetailPulse_TenantMap") ?? string.Empty;
+    foreach (var segment in raw.Split(';', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries))
+    {
+        var parts = segment.Split('=', 2, StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length == 2 && string.Equals(parts[0], tenantId, StringComparison.OrdinalIgnoreCase) &&
+            !string.IsNullOrWhiteSpace(parts[1]))
+        {
+            return parts[1];
+        }
+    }
+
+    return tenantId;
+}
+
 static async Task<(IResult? Result, IdentityToken? Token)> AuthorizeAsync(HttpRequest request, TenantStoreScope scope, AuthorizationAction action, IIdentityAuditEmitter auditEmitter, IIdentityRevocationStore revocations)
 {
     var correlationId = CorrelationId(request);
@@ -288,6 +371,11 @@ static bool TryReadToken(HttpRequest request, out IdentityToken token)
         return true;
     }
 
+    if (TryReadBearerTokenFromAuthorizationHeader(request, out token))
+    {
+        return true;
+    }
+
     var tokenId = ReadHeader(request, "X-RetailPulse-Token-Id");
     var subjectId = ReadHeader(request, "X-RetailPulse-Subject-Id");
     var tenantId = ReadHeader(request, "X-RetailPulse-Tenant-Id");
@@ -335,19 +423,117 @@ static bool TryReadToken(HttpRequest request, out IdentityToken token)
     return true;
 }
 
+static bool TryReadBearerTokenFromAuthorizationHeader(HttpRequest request, out IdentityToken token)
+{
+    token = default!;
+    var header = ReadHeader(request, "Authorization");
+    if (string.IsNullOrWhiteSpace(header) || !header.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
+    {
+        return false;
+    }
+
+    var jwt = header["Bearer ".Length..].Trim();
+    return TryReadJwtToken(jwt, out token);
+}
+
+static bool TryReadJwtToken(string jwt, out IdentityToken token)
+{
+    token = default!;
+    if (string.IsNullOrWhiteSpace(jwt))
+    {
+        return false;
+    }
+
+    var parts = jwt.Split('.', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+    if (parts.Length < 2)
+    {
+        return false;
+    }
+
+    try
+    {
+        var payload = parts[1].Replace('-', '+').Replace('_', '/');
+        var padded = payload.PadRight(payload.Length + ((4 - payload.Length % 4) % 4), '=');
+        var json = Encoding.UTF8.GetString(Convert.FromBase64String(padded));
+        using var document = System.Text.Json.JsonDocument.Parse(json);
+        var claims = document.RootElement;
+
+        var subjectId = GetStringClaim(claims, "oid", "sub");
+        var tenantId = ResolveTenantId(GetStringClaim(claims, "tid"));
+        var tokenId = GetStringClaim(claims, "jti") ?? subjectId;
+        var issuedAt = GetUnixClaim(claims, "iat") ?? DateTimeOffset.UtcNow;
+        var expiresAt = GetUnixClaim(claims, "exp") ?? DateTimeOffset.UtcNow.AddMinutes(5);
+        var roleValues = GetStringArrayClaim(claims, "roles", "role");
+        var groupValues = GetStringArrayClaim(claims, "groups", "group");
+
+        var storeId = GetStringClaim(claims, "store_id", "storeId");
+        if (string.IsNullOrWhiteSpace(storeId))
+        {
+            foreach (var group in groupValues)
+            {
+                var resolvedStoreId = ResolveStoreIdFromGroup(group);
+                if (!string.IsNullOrWhiteSpace(resolvedStoreId))
+                {
+                    storeId = resolvedStoreId;
+                    break;
+                }
+            }
+        }
+
+        if (string.IsNullOrWhiteSpace(subjectId) || string.IsNullOrWhiteSpace(tenantId) || string.IsNullOrWhiteSpace(tokenId) || roleValues.Length == 0 ||
+            !roleValues.All(value => Enum.TryParse<IdentityRole>(value, ignoreCase: true, out _)))
+        {
+            return false;
+        }
+
+        token = new IdentityToken(tokenId, IdentityPrincipalType.User, subjectId, tenantId, storeId, roleValues.Select(value => Enum.Parse<IdentityRole>(value, ignoreCase: true)).ToArray(), issuedAt, expiresAt);
+        return true;
+    }
+    catch
+    {
+        return false;
+    }
+}
+
 static bool TryReadBearerToken(System.Security.Claims.ClaimsPrincipal principal, out IdentityToken token)
 {
     token = default!;
-    var subjectId = principal.FindFirst("oid")?.Value ?? principal.FindFirst("sub")?.Value;
-    var tenantId = principal.FindFirst("tid")?.Value;
-    var storeId = principal.FindFirst("store_id")?.Value ?? principal.FindFirst("storeId")?.Value;
-    var tokenId = principal.FindFirst("jti")?.Value ?? subjectId;
+    var subjectId = FirstClaimValue(principal,
+        "oid",
+        "http://schemas.microsoft.com/identity/claims/objectidentifier",
+        "sub",
+        "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/nameidentifier");
+    var tenantId = ResolveTenantId(FirstClaimValue(principal,
+        "tid",
+        "http://schemas.microsoft.com/identity/claims/tenantid"));
+    var tokenId = FirstClaimValue(principal, "jti") ?? subjectId;
     var issuedAt = ReadUnixClaim(principal, "iat") ?? DateTimeOffset.UtcNow;
     var expiresAt = ReadUnixClaim(principal, "exp") ?? DateTimeOffset.UtcNow.AddMinutes(5);
-    var roleValues = principal.FindAll("roles").Select(claim => claim.Value)
-        .Concat(principal.FindAll("role").Select(claim => claim.Value))
+    var roleValues = principal.Claims
+        .Where(claim => claim.Type is "roles" or "role" or "http://schemas.microsoft.com/ws/2008/06/identity/claims/role" or System.Security.Claims.ClaimTypes.Role)
+        .Select(claim => claim.Value)
         .Distinct(StringComparer.OrdinalIgnoreCase)
         .ToArray();
+    var groupValues = principal.Claims
+        .Where(claim => claim.Type is "groups" or "group" or "http://schemas.microsoft.com/ws/2008/06/identity/claims/groups")
+        .Select(claim => claim.Value)
+        .Distinct(StringComparer.OrdinalIgnoreCase)
+        .ToArray();
+
+    var storeId = FirstClaimValue(principal, "store_id", "storeId")
+        ?? principal.Claims.FirstOrDefault(claim => claim.Type.EndsWith("store_id", StringComparison.OrdinalIgnoreCase) || claim.Type.EndsWith("storeId", StringComparison.OrdinalIgnoreCase))?.Value;
+    if (string.IsNullOrWhiteSpace(storeId))
+    {
+        foreach (var group in groupValues)
+        {
+            var resolvedStoreId = ResolveStoreIdFromGroup(group);
+            if (!string.IsNullOrWhiteSpace(resolvedStoreId))
+            {
+                storeId = resolvedStoreId;
+                break;
+            }
+        }
+    }
 
     if (string.IsNullOrWhiteSpace(subjectId) || string.IsNullOrWhiteSpace(tenantId) || string.IsNullOrWhiteSpace(tokenId) || roleValues.Length == 0 ||
         !roleValues.All(value => Enum.TryParse<IdentityRole>(value, ignoreCase: true, out _)))
@@ -360,10 +546,105 @@ static bool TryReadBearerToken(System.Security.Claims.ClaimsPrincipal principal,
     return true;
 }
 
-static DateTimeOffset? ReadUnixClaim(System.Security.Claims.ClaimsPrincipal principal, string claimType)
+static string? FirstClaimValue(System.Security.Claims.ClaimsPrincipal principal, params string[] claimTypes)
 {
-    var value = principal.FindFirst(claimType)?.Value;
-    return long.TryParse(value, out var seconds) ? DateTimeOffset.FromUnixTimeSeconds(seconds) : null;
+    foreach (var claimType in claimTypes)
+    {
+        var value = principal.FindFirst(claimType)?.Value;
+        if (!string.IsNullOrWhiteSpace(value))
+        {
+            return value;
+        }
+    }
+
+    foreach (var claim in principal.Claims)
+    {
+        if (claimTypes.Contains(claim.Type, StringComparer.OrdinalIgnoreCase))
+        {
+            return claim.Value;
+        }
+    }
+
+    return null;
+}
+
+static DateTimeOffset? ReadUnixClaim(System.Security.Claims.ClaimsPrincipal principal, params string[] claimTypes)
+{
+    foreach (var claimType in claimTypes)
+    {
+        var value = principal.FindFirst(claimType)?.Value;
+        if (long.TryParse(value, out var seconds))
+        {
+            return DateTimeOffset.FromUnixTimeSeconds(seconds);
+        }
+    }
+
+    return null;
+}
+
+static string? GetStringClaim(System.Text.Json.JsonElement claims, params string[] names)
+{
+    foreach (var name in names)
+    {
+        if (claims.TryGetProperty(name, out var value) && value.ValueKind is not System.Text.Json.JsonValueKind.Null && value.ValueKind is not System.Text.Json.JsonValueKind.Undefined)
+        {
+            return value.ValueKind == System.Text.Json.JsonValueKind.String ? value.GetString() : value.ToString();
+        }
+    }
+
+    return null;
+}
+
+static string[] GetStringArrayClaim(System.Text.Json.JsonElement claims, params string[] names)
+{
+    foreach (var name in names)
+    {
+        if (!claims.TryGetProperty(name, out var value))
+        {
+            continue;
+        }
+
+        if (value.ValueKind == System.Text.Json.JsonValueKind.Array)
+        {
+            var result = new List<string>();
+            foreach (var item in value.EnumerateArray())
+            {
+                if (item.ValueKind == System.Text.Json.JsonValueKind.String && !string.IsNullOrWhiteSpace(item.GetString()))
+                {
+                    result.Add(item.GetString()!);
+                }
+            }
+
+            if (result.Count > 0)
+            {
+                return result.ToArray();
+            }
+        }
+
+        if (value.ValueKind == System.Text.Json.JsonValueKind.String)
+        {
+            var text = value.GetString();
+            if (!string.IsNullOrWhiteSpace(text))
+            {
+                return text.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+            }
+        }
+    }
+
+    return [];
+}
+
+static DateTimeOffset? GetUnixClaim(System.Text.Json.JsonElement claims, params string[] names)
+{
+    foreach (var name in names)
+    {
+        if (claims.TryGetProperty(name, out var value) && value.ValueKind == System.Text.Json.JsonValueKind.Number && value.TryGetInt64(out var seconds))
+        {
+            return DateTimeOffset.FromUnixTimeSeconds(seconds);
+        }
+    }
+
+    return null;
 }
 
 static string? ReadHeader(HttpRequest request, string key)
@@ -395,3 +676,5 @@ static bool TryParseRoles(string rolesRaw, out IReadOnlyCollection<IdentityRole>
     roles = parsed;
     return parsed.Count > 0;
 }
+
+record InventoryAdjustmentRequest(string ProductId, int QuantityDelta, string Reason, string CommandId, int ExpectedVersion);

@@ -6,6 +6,9 @@ import type { AccountInfo, AuthenticationResult, Configuration, SilentRequest } 
 export type PortalSession = {
   account: AccountInfo
   accessToken: string
+  tenantId?: string
+  storeId?: string
+  roles: string[]
 }
 
 const clientId = import.meta.env.VITE_ENTRA_CLIENT_ID ?? ''
@@ -85,7 +88,72 @@ export async function getPortalSession(): Promise<PortalSession | null> {
 
 function toSession(client: PublicClientApplication, result: AuthenticationResult): PortalSession {
   client.setActiveAccount(result.account)
-  return { account: result.account, accessToken: result.accessToken }
+
+  const accessTokenClaims = decodeJwtClaims(result.accessToken)
+  const idTokenClaims = (result.idTokenClaims ?? result.account?.idTokenClaims ?? {}) as Record<string, unknown>
+  const claims = mergeClaims(idTokenClaims, accessTokenClaims)
+  const tenantId = readStringClaim(claims, 'tid') ?? readStringClaim(claims, 'tenantId') ?? undefined
+  const storeId = readStringClaim(claims, 'store_id') ?? readStringClaim(claims, 'storeId') ?? undefined
+  const roles = readStringArrayClaim(claims, 'roles') ?? readStringArrayClaim(claims, 'role') ?? []
+
+  if (!tenantId || roles.length === 0) {
+    throw new Error('Your Entra token is missing the required tenant or role claims for RetailPulse Manager access.')
+  }
+
+  return {
+    account: result.account,
+    accessToken: result.accessToken,
+    tenantId,
+    storeId,
+    roles,
+  }
+}
+
+function mergeClaims(...claimSets: Array<Record<string, unknown>>): Record<string, unknown> {
+  const merged: Record<string, unknown> = {}
+
+  for (const claims of claimSets) {
+    for (const [key, value] of Object.entries(claims)) {
+      if (value !== undefined && value !== null && !(key in merged)) {
+        merged[key] = value
+      }
+    }
+  }
+
+  return merged
+}
+
+function decodeJwtClaims(token: string): Record<string, unknown> {
+  const parts = token.split('.')
+  if (parts.length < 2) {
+    return {}
+  }
+
+  const payload = parts[1].replace(/-/g, '+').replace(/_/g, '/')
+  const padded = payload.padEnd(Math.ceil(payload.length / 4) * 4, '=')
+
+  try {
+    return JSON.parse(atob(padded)) as Record<string, unknown>
+  } catch {
+    return {}
+  }
+}
+
+function readStringClaim(claims: Record<string, unknown>, key: string): string | undefined {
+  const value = claims[key]
+  return typeof value === 'string' && value.trim().length > 0 ? value : undefined
+}
+
+function readStringArrayClaim(claims: Record<string, unknown>, key: string): string[] | undefined {
+  const value = claims[key]
+  if (Array.isArray(value)) {
+    const result = value.filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
+    return result.length > 0 ? result : undefined
+  }
+  if (typeof value === 'string' && value.trim().length > 0) {
+    return value.split(',').map((item) => item.trim()).filter(Boolean)
+  }
+  return undefined
 }
 
 function isTokenRequestCacheError(error: unknown) {

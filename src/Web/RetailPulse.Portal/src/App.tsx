@@ -83,6 +83,8 @@ function App() {
   const [session, setSession] = useState<PortalSession | null>(null)
   const [authLoading, setAuthLoading] = useState(!demoMode && entraConfigured)
   const [authError, setAuthError] = useState<string | null>(null)
+  const [adjustmentStatus, setAdjustmentStatus] = useState<string | null>(null)
+  const [adjustmentSubmitting, setAdjustmentSubmitting] = useState(false)
 
   useEffect(() => {
     if (demoMode || !entraConfigured) {
@@ -105,6 +107,10 @@ function App() {
       const cached = readCachedReport(storeId)
 
       try {
+        if (!demoMode && entraConfigured && session && (!session.tenantId || !session.roles.length)) {
+          throw new Error('Your Entra token does not include the required tenant and role claims for manager access.')
+        }
+
         const fresh = await fetchSalesReport(storeId, session?.accessToken)
         if (cancelled) return
         setReport(fresh)
@@ -256,6 +262,24 @@ function App() {
                 </div>
               ))}
             </div>
+            <form className="inventory-form" onSubmit={(event) => void submitInventoryAdjustment(event, storeId, session?.accessToken, setAdjustmentStatus, setAdjustmentSubmitting)}>
+              <label>
+                Product ID
+                <input name="productId" defaultValue="coffee" required />
+              </label>
+              <label>
+                Quantity change
+                <input name="quantityDelta" type="number" defaultValue="1" required />
+              </label>
+              <label>
+                Reason
+                <input name="reason" defaultValue="Cycle count" required />
+              </label>
+              <button className="session-button" type="submit" disabled={adjustmentSubmitting || !session}>
+                {adjustmentSubmitting ? 'Submitting...' : 'Adjust inventory'}
+              </button>
+              {adjustmentStatus ? <p className="command-status">{adjustmentStatus}</p> : null}
+            </form>
           </article>
 
           <article className="panel action-panel" id="sync">
@@ -306,6 +330,25 @@ async function fetchSalesReport(storeId: string, accessToken?: string): Promise<
     throw new Error('Live identity session is not configured')
   }
 
+  if (!demoMode && accessToken) {
+    const token = accessToken.split('.')[1]
+    if (token) {
+      try {
+        const padded = token.replace(/-/g, '+').replace(/_/g, '/').padEnd(Math.ceil(token.length / 4) * 4, '=')
+        const claims = JSON.parse(atob(padded))
+        const roleList = Array.isArray(claims.roles) ? claims.roles : typeof claims.role === 'string' ? claims.role.split(',') : []
+        const groupList = Array.isArray(claims.groups) ? claims.groups : typeof claims.group === 'string' ? claims.group.split(',') : []
+        const hasStoreClaim = !!(claims.store_id || claims.storeId)
+        const hasGroupMembership = groupList.length > 0
+        if (!hasStoreClaim && !hasGroupMembership && roleList.length === 0) {
+          throw new Error('Your Entra token is missing the required manager authorization claims.')
+        }
+      } catch {
+        throw new Error('Your Entra token is malformed or missing the required RetailPulse claims.')
+      }
+    }
+  }
+
   const issuedAt = new Date().toISOString()
   const expiresAt = new Date(Date.now() + 60 * 60 * 1000).toISOString()
   const url = `${apiBaseUrl.replace(/\/$/, '')}/api/v1/tenants/tenant-1/stores/${storeId}/reports/sales?from=2026-08-23T00:00:00Z&to=2026-08-24T00:00:00Z&timezone=UTC&currency=USD`
@@ -327,6 +370,49 @@ async function fetchSalesReport(storeId: string, accessToken?: string): Promise<
   }
 
   return await response.json() as SalesReport
+}
+
+async function submitInventoryAdjustment(
+  event: React.FormEvent<HTMLFormElement>,
+  storeId: string,
+  accessToken: string | undefined,
+  setStatus: (status: string | null) => void,
+  setSubmitting: (submitting: boolean) => void,
+) {
+  event.preventDefault()
+  if (!accessToken) {
+    setStatus('Sign in with Entra ID to submit manager commands.')
+    return
+  }
+
+  const form = new FormData(event.currentTarget)
+  const commandId = crypto.randomUUID()
+  setSubmitting(true)
+  setStatus(null)
+
+  try {
+    const response = await fetch(`${apiBaseUrl.replace(/\/$/, '')}/api/v1/tenants/tenant-1/stores/${storeId}/manager/inventory-adjustments`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        productId: form.get('productId'),
+        quantityDelta: Number(form.get('quantityDelta')),
+        reason: form.get('reason'),
+        commandId,
+        expectedVersion: 0,
+      }),
+    })
+    const body = await response.json().catch(() => ({})) as { outcome?: string; error?: string }
+    if (!response.ok) {
+      setStatus(body.error ?? `Inventory command failed (${response.status}).`)
+      return
+    }
+    setStatus(`Inventory command ${body.outcome?.toLowerCase() ?? 'accepted'}.`)
+  } catch {
+    setStatus('Inventory command could not reach the API.')
+  } finally {
+    setSubmitting(false)
+  }
 }
 
 async function handleSignIn(

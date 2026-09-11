@@ -385,6 +385,43 @@ select {
 	font-size: 13px;
 }
 
+.inventory-form {
+	display: grid;
+	gap: 10px;
+	margin-top: 18px;
+	padding-top: 16px;
+	border-top: 1px solid #dce5de;
+}
+
+.inventory-form label {
+	display: grid;
+	gap: 5px;
+	color: #66776d;
+	font-size: 12px;
+	font-weight: 700;
+}
+
+.inventory-form input {
+	min-height: 38px;
+	padding: 0 10px;
+	border: 1px solid #c8d5cc;
+	border-radius: 6px;
+	background: #fbfcfa;
+	color: #183d32;
+	font: inherit;
+}
+
+.inventory-form .session-button {
+	justify-self: start;
+	margin-top: 4px;
+}
+
+.command-status {
+	margin: 0;
+	color: #2f654e;
+	font-size: 13px;
+}
+
 .check-list {
 	padding: 0;
 	list-style: none;

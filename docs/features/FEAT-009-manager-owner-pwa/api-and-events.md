@@ -12,6 +12,7 @@
 - Push registration: the PWA requests the server VAPID public key and registers a browser subscription through the authenticated tenant/store/user scope; private keys and provider credentials never enter browser storage.
 - Push configuration: the cloud API reads `Push__VapidPublicKey` from environment configuration or Key Vault-backed deployment settings; missing configuration is reported as unavailable and does not create a false subscription.
 - Identity audit and revocation: configured cloud runs persist privileged-action/token-rejection audit events and subject/token revocations in PostgreSQL; isolated local tests may use in-memory providers explicitly.
+- Cloud schema lifecycle: PostgreSQL schema changes are applied by the versioned startup migration runner before requests are served; request handlers do not perform DDL.
 - Owner settings: `GET` and `PUT /api/v1/tenants/{tenantId}/stores/{storeId}/settings` are owner-only, tenant/store scoped, and use an expected version to reject stale updates.
 - Insights: `POST` and `GET /api/v1/tenants/{tenantId}/stores/{storeId}/insights` are manager/owner scoped and return advisory, schema-validated results with source, prompt, model, and validation metadata; the current provider is deterministic until Azure OpenAI is configured.
 - Authentication and authorization: configurable MSAL browser session for Entra ID plus server-side role/store/tenant policy; PWA never trusts route visibility for authorization. Synthetic manager headers are limited to explicit local `VITE_DEMO_MODE=true`.

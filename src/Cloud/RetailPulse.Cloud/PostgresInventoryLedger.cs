@@ -19,7 +19,6 @@ public sealed class PostgresInventoryLedger : IInventoryLedgerRepository
     {
         await using var connection = new NpgsqlConnection(connectionString);
         await connection.OpenAsync(cancellationToken);
-        await EnsureSchemaAsync(connection, cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken);
         var existing = await FindMovementAsync(connection, transaction, movement, cancellationToken);
         var current = await ReadBalanceAsync(connection, transaction, movement.TenantId, movement.StoreId, movement.ProductId, cancellationToken);
@@ -58,7 +57,6 @@ public sealed class PostgresInventoryLedger : IInventoryLedgerRepository
     {
         await using var connection = new NpgsqlConnection(connectionString);
         await connection.OpenAsync(cancellationToken);
-        await EnsureSchemaAsync(connection, cancellationToken);
         return await ReadBalanceAsync(connection, null, scope.TenantId, scope.StoreId, productId, cancellationToken);
     }
 
@@ -66,7 +64,6 @@ public sealed class PostgresInventoryLedger : IInventoryLedgerRepository
     {
         await using var connection = new NpgsqlConnection(connectionString);
         await connection.OpenAsync(cancellationToken);
-        await EnsureSchemaAsync(connection, cancellationToken);
         await using var command = CreateCommand(connection, null, "SELECT tenant_id, store_id, movement_id, product_id, quantity_delta, reason, effective_at, expected_version, aggregate_version, actor_id, role, command_id, correlation_id FROM inventory_movements WHERE tenant_id = @tenant AND store_id = @store AND (movement_id = @movement OR command_id = @command) LIMIT 1;");
         AddScopeParameters(command, scope.TenantId, scope.StoreId);
         command.Parameters.AddWithValue("movement", movementId);
@@ -79,7 +76,6 @@ public sealed class PostgresInventoryLedger : IInventoryLedgerRepository
     {
         await using var connection = new NpgsqlConnection(connectionString);
         await connection.OpenAsync(cancellationToken);
-        await EnsureSchemaAsync(connection, cancellationToken);
         await using var command = CreateCommand(connection, null, "SELECT tenant_id, store_id, product_id, minimum_quantity, version FROM inventory_thresholds WHERE tenant_id = @tenant AND store_id = @store AND product_id = @product;");
         AddScopeParameters(command, scope.TenantId, scope.StoreId);
         command.Parameters.AddWithValue("product", productId);
@@ -91,7 +87,6 @@ public sealed class PostgresInventoryLedger : IInventoryLedgerRepository
     {
         await using var connection = new NpgsqlConnection(connectionString);
         await connection.OpenAsync(cancellationToken);
-        await EnsureSchemaAsync(connection, cancellationToken);
         await using var command = CreateCommand(connection, null, "INSERT INTO inventory_thresholds (tenant_id, store_id, product_id, minimum_quantity, version) VALUES (@tenant, @store, @product, @minimum, @version) ON CONFLICT (tenant_id, store_id, product_id) DO UPDATE SET minimum_quantity = EXCLUDED.minimum_quantity, version = EXCLUDED.version;");
         AddScopeParameters(command, threshold.TenantId, threshold.StoreId);
         command.Parameters.AddWithValue("product", threshold.ProductId);
@@ -100,12 +95,6 @@ public sealed class PostgresInventoryLedger : IInventoryLedgerRepository
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
-    private static async Task EnsureSchemaAsync(NpgsqlConnection connection, CancellationToken cancellationToken)
-    {
-        await using var command = connection.CreateCommand();
-        command.CommandText = "CREATE TABLE IF NOT EXISTS inventory_balances (tenant_id TEXT NOT NULL, store_id TEXT NOT NULL, product_id TEXT NOT NULL, quantity INTEGER NOT NULL, version INTEGER NOT NULL, PRIMARY KEY (tenant_id, store_id, product_id)); CREATE TABLE IF NOT EXISTS inventory_movements (tenant_id TEXT NOT NULL, store_id TEXT NOT NULL, movement_id TEXT NOT NULL, product_id TEXT NOT NULL, quantity_delta INTEGER NOT NULL, reason TEXT NOT NULL, effective_at TIMESTAMPTZ NOT NULL, expected_version INTEGER NOT NULL, aggregate_version INTEGER NOT NULL, actor_id TEXT NOT NULL, role TEXT NOT NULL, command_id TEXT NOT NULL, correlation_id TEXT NOT NULL, PRIMARY KEY (tenant_id, store_id, movement_id), UNIQUE (tenant_id, store_id, command_id)); CREATE TABLE IF NOT EXISTS inventory_thresholds (tenant_id TEXT NOT NULL, store_id TEXT NOT NULL, product_id TEXT NOT NULL, minimum_quantity INTEGER NOT NULL, version INTEGER NOT NULL, PRIMARY KEY (tenant_id, store_id, product_id));";
-        await command.ExecuteNonQueryAsync(cancellationToken);
-    }
 
     private static async Task<InventoryMovementRecord?> FindMovementAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, InventoryMovementRecord movement, CancellationToken cancellationToken)
     {

@@ -37,12 +37,6 @@ public sealed class PostgresIdentityAuditEmitter(string? connectionString) : IId
     {
         var connection = new NpgsqlConnection(connectionString);
         await connection.OpenAsync(cancellationToken);
-        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
-        await using var command = connection.CreateCommand();
-        command.Transaction = transaction;
-        command.CommandText = "SELECT pg_advisory_xact_lock(482901); CREATE TABLE IF NOT EXISTS identity_audit_events (event_id TEXT PRIMARY KEY, aggregate_id TEXT NOT NULL, tenant_id TEXT NOT NULL, store_id TEXT NULL, occurred_at TIMESTAMPTZ NOT NULL, correlation_id TEXT NOT NULL, subject_id TEXT NULL, action TEXT NOT NULL, outcome TEXT NOT NULL, failure TEXT NULL, schema_version INTEGER NOT NULL); CREATE TABLE IF NOT EXISTS revoked_identity_subjects (tenant_id TEXT NOT NULL, subject_id TEXT NOT NULL, revoked_at TIMESTAMPTZ NOT NULL, PRIMARY KEY (tenant_id, subject_id)); CREATE TABLE IF NOT EXISTS revoked_identity_tokens (token_id TEXT PRIMARY KEY, revoked_at TIMESTAMPTZ NOT NULL);";
-        await command.ExecuteNonQueryAsync(cancellationToken);
-        await transaction.CommitAsync(cancellationToken);
         return connection;
     }
 }

@@ -40,12 +40,9 @@ public sealed class PostgresPushSubscriptionStore(string? connectionString) : IP
     {
         var connection = new NpgsqlConnection(connectionString);
         await connection.OpenAsync(cancellationToken);
-        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
         await using var command = connection.CreateCommand();
-        command.Transaction = transaction;
-        command.CommandText = "SELECT pg_advisory_xact_lock(482901); CREATE TABLE IF NOT EXISTS push_subscriptions (tenant_id TEXT NOT NULL, store_id TEXT NOT NULL, subject_id TEXT NOT NULL, endpoint TEXT NOT NULL, p256dh TEXT NOT NULL, auth TEXT NOT NULL, updated_at TIMESTAMPTZ NOT NULL, PRIMARY KEY (tenant_id, store_id, subject_id, endpoint));";
-        await command.ExecuteNonQueryAsync(cancellationToken);
-        await transaction.CommitAsync(cancellationToken);
+        command.CommandText = "SELECT 1;";
+        await command.ExecuteScalarAsync(cancellationToken);
         return connection;
     }
 }

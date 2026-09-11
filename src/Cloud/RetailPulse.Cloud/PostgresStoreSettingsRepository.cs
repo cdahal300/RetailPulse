@@ -42,8 +42,8 @@ public sealed class PostgresStoreSettingsRepository(string? connectionString) : 
         var connection = new NpgsqlConnection(connectionString);
         await connection.OpenAsync(cancellationToken);
         await using var command = connection.CreateCommand();
-        command.CommandText = "CREATE TABLE IF NOT EXISTS store_settings (tenant_id TEXT NOT NULL, store_id TEXT NOT NULL, display_name TEXT NOT NULL, time_zone TEXT NOT NULL, currency TEXT NOT NULL, inventory_adjustments_enabled BOOLEAN NOT NULL, version INTEGER NOT NULL, PRIMARY KEY (tenant_id, store_id));";
-        await command.ExecuteNonQueryAsync(cancellationToken);
+        command.CommandText = "SELECT 1;";
+        await command.ExecuteScalarAsync(cancellationToken);
         return connection;
     }
 

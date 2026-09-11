@@ -323,6 +323,20 @@ public sealed class IdentityAuthorizationEndpointIntegrationTests : IClassFixtur
     }
 
     [Fact]
+    public async Task Cloud_push_registration_requires_manager_scope_and_provider_configuration()
+    {
+        var noToken = await cloudClient.GetAsync("/api/v1/tenants/tenant-1/stores/store-1/push/public-key");
+        Assert.Equal(HttpStatusCode.Unauthorized, noToken.StatusCode);
+
+        using var managerKeyRequest = CloudRequest("/api/v1/tenants/tenant-1/stores/store-1/push/public-key", HttpMethod.Get, "manager-push-key-token", "manager-1", "tenant-1", "store-1", "User", "Manager", DateTimeOffset.UtcNow.AddMinutes(-5), DateTimeOffset.UtcNow.AddMinutes(30));
+        Assert.Equal(HttpStatusCode.NotFound, (await cloudClient.SendAsync(managerKeyRequest)).StatusCode);
+
+        using var managerSubscriptionRequest = CloudRequest("/api/v1/tenants/tenant-1/stores/store-1/push-subscription", HttpMethod.Put, "manager-push-subscription-token", "manager-1", "tenant-1", "store-1", "User", "Manager", DateTimeOffset.UtcNow.AddMinutes(-5), DateTimeOffset.UtcNow.AddMinutes(30));
+        managerSubscriptionRequest.Content = JsonContent.Create(new { Endpoint = "https://push.example/subscription-1", P256dh = "public-key", Auth = "auth-key" });
+        Assert.Equal(HttpStatusCode.Accepted, (await cloudClient.SendAsync(managerSubscriptionRequest)).StatusCode);
+    }
+
+    [Fact]
     public async Task Cloud_role_change_revokes_existing_subject_session()
     {
         await using var factory = new TestCloudFactory();

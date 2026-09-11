@@ -9,6 +9,7 @@
 - Given notification permission is denied, unavailable, or granted, then the PWA shows the corresponding state; granted notifications deep-link to the relevant alerts view when selected.
 - Given a manager or owner opens settings, then only an owner can view or update store configuration and stale updates remain reviewable without overwriting newer settings.
 - Given an authorized manager or owner views insights, then the PWA shows advisory source and validation metadata and cannot use insight output to mutate inventory, pricing, payments, or checkout.
+- Given a configured VAPID provider, when a manager enables notifications, then the browser subscription is registered for the authenticated tenant, store, and user; without provider configuration, the PWA shows an unavailable state.
 
 ## Failure and resilience behavior
 

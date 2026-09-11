@@ -10,3 +10,14 @@ Browser and device-oriented tests for `src/Web/RetailPulse.Portal/`.
 - `fixtures/`: authenticated sessions, stores, flags, and device profiles
 
 Use Playwright for repeatable browser workflows and a small real-device smoke matrix for Safari iOS and Chrome Android.
+
+The automated demo-mode acceptance suite runs from the portal package:
+
+```bash
+cd src/Web/RetailPulse.Portal
+npx playwright install chromium
+npm run test:e2e -- --project=desktop
+npm run test:e2e -- --project=phone
+```
+
+The desktop project runs in CI. The phone project uses Playwright WebKit locally and should be complemented by a real iOS Safari check for release evidence.

@@ -238,6 +238,40 @@ public sealed class IdentityAuthorizationEndpointIntegrationTests : IClassFixtur
     }
 
     [Fact]
+    public async Task Cloud_alerts_and_notification_preferences_require_manager_scope()
+    {
+        using var cashierRequest = CloudRequest(
+            "/api/v1/tenants/tenant-1/stores/store-1/alerts",
+            HttpMethod.Get,
+            "cashier-alert-token",
+            "cashier-1",
+            "tenant-1",
+            "store-1",
+            "User",
+            "Cashier",
+            DateTimeOffset.UtcNow.AddMinutes(-5),
+            DateTimeOffset.UtcNow.AddMinutes(30));
+        var cashier = await cloudClient.SendAsync(cashierRequest);
+        Assert.Equal(HttpStatusCode.Forbidden, cashier.StatusCode);
+
+        using var managerRequest = CloudRequest(
+            "/api/v1/tenants/tenant-1/stores/store-1/notification-preferences",
+            HttpMethod.Get,
+            "manager-alert-token",
+            "manager-1",
+            "tenant-1",
+            "store-1",
+            "User",
+            "Manager",
+            DateTimeOffset.UtcNow.AddMinutes(-5),
+            DateTimeOffset.UtcNow.AddMinutes(30));
+        var manager = await cloudClient.SendAsync(managerRequest);
+        Assert.Equal(HttpStatusCode.OK, manager.StatusCode);
+        using var preferences = JsonDocument.Parse(await manager.Content.ReadAsStringAsync());
+        Assert.True(preferences.RootElement.GetProperty("lowStockEnabled").GetBoolean());
+    }
+
+    [Fact]
     public async Task Cloud_role_change_revokes_existing_subject_session()
     {
         await using var factory = new TestCloudFactory();

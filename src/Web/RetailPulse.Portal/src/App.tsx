@@ -84,6 +84,20 @@ type QueuedInventoryCommand = {
   expectedVersion: number
 }
 
+type OperationalAlert = {
+  alertId: string
+  severity: string
+  category: string
+  title: string
+  detail: string
+  occurredAt: string
+}
+
+type NotificationPreferences = {
+  lowStockEnabled: boolean
+  syncFailureEnabled: boolean
+}
+
 const stores: StoreOption[] = [
   { id: 'store-1', name: 'Bardstown Road', market: 'Louisville' },
   { id: 'store-2', name: 'South End Market', market: 'Louisville' },
@@ -108,6 +122,10 @@ function App() {
   const [syncHealth, setSyncHealth] = useState<SyncHealth | null>(null)
   const [syncHealthError, setSyncHealthError] = useState<string | null>(null)
   const [pendingCommandCount, setPendingCommandCount] = useState(() => readQueuedCommands().length)
+  const [alerts, setAlerts] = useState<OperationalAlert[]>([])
+  const [alertsError, setAlertsError] = useState<string | null>(null)
+  const [notificationPreferences, setNotificationPreferences] = useState<NotificationPreferences>({ lowStockEnabled: true, syncFailureEnabled: true })
+  const [preferencesSaving, setPreferencesSaving] = useState(false)
 
   useEffect(() => {
     if (demoMode || !entraConfigured) {
@@ -148,6 +166,25 @@ function App() {
     }
 
     void loadReport()
+    return () => {
+      cancelled = true
+    }
+  }, [session, storeId, refreshKey])
+
+  useEffect(() => {
+    let cancelled = false
+    setAlertsError(null)
+    if (!demoMode && entraConfigured && !session) return
+    void Promise.all([fetchAlerts(storeId, session?.accessToken), fetchNotificationPreferences(storeId, session?.accessToken)])
+      .then(([nextAlerts, preferences]) => {
+        if (!cancelled) {
+          setAlerts(nextAlerts)
+          setNotificationPreferences(preferences)
+        }
+      })
+      .catch((error: unknown) => {
+        if (!cancelled) setAlertsError(error instanceof Error ? error.message : 'Alerts are unavailable')
+      })
     return () => {
       cancelled = true
     }
@@ -347,6 +384,21 @@ function App() {
               <li><span />Last successful sync: {syncHealth?.lastSuccessAt ? formatTime(syncHealth.lastSuccessAt) : 'No completed sync recorded.'}</li>
             </ul>
           </article>
+
+          <article className="panel" id="alerts">
+            <div className="panel-heading">
+              <div>
+                <p className="eyebrow">Alerts</p>
+                <h2>Needs attention</h2>
+              </div>
+              <Bell size={20} />
+            </div>
+            {alertsError ? <p className="inline-alert"><CloudOff size={16} />{alertsError}</p> : alerts.length === 0 ? <p className="empty-state">No active alerts for this store.</p> : <div className="alert-list">{alerts.map((alert) => <div className="alert-row" key={alert.alertId}><strong>{alert.title}</strong><p>{alert.detail}</p><span>{formatTime(alert.occurredAt)}</span></div>)}</div>}
+            <div className="preference-list">
+              <label><input type="checkbox" checked={notificationPreferences.lowStockEnabled} disabled={preferencesSaving || !session} onChange={(event) => void saveNotificationPreferences(storeId, session?.accessToken, { ...notificationPreferences, lowStockEnabled: event.target.checked }, setNotificationPreferences, setPreferencesSaving)} /> Low-stock notifications</label>
+              <label><input type="checkbox" checked={notificationPreferences.syncFailureEnabled} disabled={preferencesSaving || !session} onChange={(event) => void saveNotificationPreferences(storeId, session?.accessToken, { ...notificationPreferences, syncFailureEnabled: event.target.checked }, setNotificationPreferences, setPreferencesSaving)} /> Sync-failure notifications</label>
+            </div>
+          </article>
         </section>
       </section>
     </main>
@@ -442,6 +494,43 @@ async function fetchSyncHealth(storeId: string, accessToken?: string): Promise<S
   const response = await fetch(url, { headers })
   if (!response.ok) throw new Error(`Sync health API returned HTTP ${response.status}`)
   return await response.json() as SyncHealth
+}
+
+async function fetchAlerts(storeId: string, accessToken?: string): Promise<OperationalAlert[]> {
+  if (!apiBaseUrl || (!demoMode && !accessToken)) throw new Error('Live identity session is not configured')
+  const headers: Record<string, string> = demoMode ? {
+    'X-RetailPulse-Token-Id': `portal-alerts-${Date.now()}`,
+    'X-RetailPulse-Subject-Id': 'manager-portal',
+    'X-RetailPulse-Tenant-Id': 'tenant-1',
+    'X-RetailPulse-Store-Id': storeId,
+    'X-RetailPulse-Principal-Type': 'User',
+    'X-RetailPulse-Roles': 'Manager',
+    'X-RetailPulse-Issued-At': new Date().toISOString(),
+    'X-RetailPulse-Expires-At': new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+  } : { Authorization: `Bearer ${accessToken}` }
+  const response = await fetch(`${apiBaseUrl.replace(/\/$/, '')}/api/v1/tenants/tenant-1/stores/${storeId}/alerts`, { headers })
+  if (!response.ok) throw new Error(`Alerts API returned HTTP ${response.status}`)
+  return await response.json() as OperationalAlert[]
+}
+
+async function fetchNotificationPreferences(storeId: string, accessToken?: string): Promise<NotificationPreferences> {
+  if (!apiBaseUrl || (!demoMode && !accessToken)) throw new Error('Live identity session is not configured')
+  if (demoMode) return { lowStockEnabled: true, syncFailureEnabled: true }
+  const response = await fetch(`${apiBaseUrl.replace(/\/$/, '')}/api/v1/tenants/tenant-1/stores/${storeId}/notification-preferences`, { headers: demoMode ? {} : { Authorization: `Bearer ${accessToken}` } })
+  if (!response.ok) throw new Error(`Notification preferences API returned HTTP ${response.status}`)
+  return await response.json() as NotificationPreferences
+}
+
+async function saveNotificationPreferences(storeId: string, accessToken: string | undefined, preferences: NotificationPreferences, setPreferences: (value: NotificationPreferences) => void, setSaving: (value: boolean) => void) {
+  if (!accessToken) return
+  setSaving(true)
+  try {
+    const response = await fetch(`${apiBaseUrl.replace(/\/$/, '')}/api/v1/tenants/tenant-1/stores/${storeId}/notification-preferences`, { method: 'PUT', headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' }, body: JSON.stringify(preferences) })
+    if (!response.ok) throw new Error(`Notification preferences API returned HTTP ${response.status}`)
+    setPreferences(preferences)
+  } finally {
+    setSaving(false)
+  }
 }
 
 async function submitInventoryAdjustment(

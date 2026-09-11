@@ -18,3 +18,29 @@ self.addEventListener('fetch', (event) => {
     event.respondWith(fetch(event.request).catch(() => caches.match(OFFLINE_URL)))
   }
 })
+
+self.addEventListener('push', (event) => {
+  const payload = event.data?.json() ?? {
+    title: 'RetailPulse alert',
+    body: 'A new operational alert is available.',
+    url: '/#alerts',
+  }
+  event.waitUntil(self.registration.showNotification(payload.title, {
+    body: payload.body,
+    tag: payload.tag ?? 'retailpulse-operational-alert',
+    data: { url: payload.url ?? '/#alerts' },
+  }))
+})
+
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close()
+  const url = new URL(event.notification.data?.url ?? '/#alerts', self.location.origin).href
+  event.waitUntil(self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clients) => {
+    const existing = clients.find((client) => 'focus' in client)
+    if (existing) {
+      existing.navigate(url)
+      return existing.focus()
+    }
+    return self.clients.openWindow(url)
+  }))
+})

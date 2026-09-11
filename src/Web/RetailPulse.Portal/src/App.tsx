@@ -98,6 +98,8 @@ type NotificationPreferences = {
   syncFailureEnabled: boolean
 }
 
+type NotificationStatus = 'unsupported' | 'default' | 'denied' | 'granted'
+
 const stores: StoreOption[] = [
   { id: 'store-1', name: 'Bardstown Road', market: 'Louisville' },
   { id: 'store-2', name: 'South End Market', market: 'Louisville' },
@@ -126,6 +128,8 @@ function App() {
   const [alertsError, setAlertsError] = useState<string | null>(null)
   const [notificationPreferences, setNotificationPreferences] = useState<NotificationPreferences>({ lowStockEnabled: true, syncFailureEnabled: true })
   const [preferencesSaving, setPreferencesSaving] = useState(false)
+  const [notificationStatus, setNotificationStatus] = useState<NotificationStatus>(() => getNotificationStatus())
+  const [notificationMessage, setNotificationMessage] = useState<string | null>(null)
 
   useEffect(() => {
     if (demoMode || !entraConfigured) {
@@ -397,6 +401,12 @@ function App() {
             <div className="preference-list">
               <label><input type="checkbox" checked={notificationPreferences.lowStockEnabled} disabled={preferencesSaving || !session} onChange={(event) => void saveNotificationPreferences(storeId, session?.accessToken, { ...notificationPreferences, lowStockEnabled: event.target.checked }, setNotificationPreferences, setPreferencesSaving)} /> Low-stock notifications</label>
               <label><input type="checkbox" checked={notificationPreferences.syncFailureEnabled} disabled={preferencesSaving || !session} onChange={(event) => void saveNotificationPreferences(storeId, session?.accessToken, { ...notificationPreferences, syncFailureEnabled: event.target.checked }, setNotificationPreferences, setPreferencesSaving)} /> Sync-failure notifications</label>
+              <div className="notification-actions">
+                <span>Browser notifications: {notificationStatus === 'granted' ? 'Enabled' : notificationStatus === 'denied' ? 'Blocked' : notificationStatus === 'unsupported' ? 'Unavailable' : 'Not enabled'}</span>
+                {notificationStatus !== 'granted' && notificationStatus !== 'unsupported' ? <button className="text-button" type="button" disabled={!session} onClick={() => void enableNotifications(setNotificationStatus, setNotificationMessage)}>Enable browser notifications</button> : null}
+                {notificationStatus === 'granted' ? <button className="text-button" type="button" onClick={() => void sendTestNotification(setNotificationMessage)}>Send test alert</button> : null}
+                {notificationMessage ? <span role="status">{notificationMessage}</span> : null}
+              </div>
             </div>
           </article>
         </section>
@@ -530,6 +540,34 @@ async function saveNotificationPreferences(storeId: string, accessToken: string 
     setPreferences(preferences)
   } finally {
     setSaving(false)
+  }
+}
+
+function getNotificationStatus(): NotificationStatus {
+  if (!('Notification' in window)) return 'unsupported'
+  return Notification.permission
+}
+
+async function enableNotifications(setStatus: (status: NotificationStatus) => void, setMessage: (message: string | null) => void) {
+  if (!('Notification' in window)) {
+    setStatus('unsupported')
+    setMessage('This browser does not support notifications.')
+    return
+  }
+
+  const permission = await Notification.requestPermission()
+  setStatus(permission)
+  setMessage(permission === 'granted' ? 'Browser notifications enabled. Push provider registration is not configured yet.' : permission === 'denied' ? 'Browser notifications are blocked for this site.' : 'Notification permission was not granted.')
+}
+
+async function sendTestNotification(setMessage: (message: string | null) => void) {
+  try {
+    const registration = await navigator.serviceWorker?.ready
+    if (!registration) throw new Error('Service worker is unavailable')
+    await registration.showNotification('RetailPulse test alert', { body: 'Browser notification delivery is working.', tag: 'retailpulse-test-alert', data: { url: '/#alerts' } })
+    setMessage('Test alert sent.')
+  } catch {
+    setMessage('Browser notification delivery is unavailable in this session.')
   }
 }
 

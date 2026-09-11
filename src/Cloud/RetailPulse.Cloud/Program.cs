@@ -33,14 +33,18 @@ if (portalAllowedOrigins.Length > 0)
             .AllowAnyMethod()));
 }
 
-builder.Services.AddSingleton<IIdentityAuditEmitter, NoOpIdentityAuditEmitter>();
-builder.Services.AddSingleton<IIdentityLifecycleService, InMemoryIdentityLifecycleService>();
-builder.Services.AddSingleton<IIdentityRevocationStore, InMemoryIdentityRevocationStore>();
-builder.Services.AddSingleton<ICatalogRepository, CloudCatalogRepository>();
 var cloudDatabasePath = builder.Configuration["RetailPulse:CloudDatabasePath"] ?? Path.Combine(AppContext.BaseDirectory, "retailpulse-cloud.db");
 var postgresConnectionString = builder.Configuration.GetConnectionString("Postgres");
 var useSqliteCloudLedger = builder.Configuration.GetValue<bool>("RetailPulse:UseSqliteCloudLedger");
 var pushVapidPublicKey = builder.Configuration["Push:VapidPublicKey"];
+builder.Services.AddSingleton<IIdentityAuditEmitter>(_ => useSqliteCloudLedger || string.IsNullOrWhiteSpace(postgresConnectionString)
+    ? new NoOpIdentityAuditEmitter()
+    : new PostgresIdentityAuditEmitter(postgresConnectionString));
+builder.Services.AddSingleton<IIdentityLifecycleService, InMemoryIdentityLifecycleService>();
+builder.Services.AddSingleton<IIdentityRevocationStore>(_ => useSqliteCloudLedger || string.IsNullOrWhiteSpace(postgresConnectionString)
+    ? new InMemoryIdentityRevocationStore()
+    : new PostgresIdentityRevocationStore(postgresConnectionString));
+builder.Services.AddSingleton<ICatalogRepository, CloudCatalogRepository>();
 builder.Services.AddSingleton<IInventoryLedgerRepository>(_ => useSqliteCloudLedger || string.IsNullOrWhiteSpace(postgresConnectionString)
     ? new SqliteInventoryLedger(cloudDatabasePath)
     : new PostgresInventoryLedger(postgresConnectionString));

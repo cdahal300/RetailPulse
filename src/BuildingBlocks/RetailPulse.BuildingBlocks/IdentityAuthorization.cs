@@ -14,7 +14,8 @@ public enum AuthorizationAction
     RevokeDevice,
     ManageRoles,
     ViewSyncHealth,
-    ManageNotificationPreferences
+    ManageNotificationPreferences,
+    ViewInsights
 }
 
 public enum AuthorizationFailure
@@ -115,6 +116,7 @@ public static class IdentityAuthorizationPolicy
         AuthorizationAction.ViewReports => [IdentityRole.Manager],
         AuthorizationAction.ViewSyncHealth => [IdentityRole.Manager],
         AuthorizationAction.ManageNotificationPreferences => [IdentityRole.Manager],
+        AuthorizationAction.ViewInsights => [IdentityRole.Manager],
         AuthorizationAction.ExecuteCheckout => [IdentityRole.Cashier, IdentityRole.Manager, IdentityRole.Device],
         AuthorizationAction.AdjustInventory => [IdentityRole.Manager],
         AuthorizationAction.ConfigureStore => [IdentityRole.Owner],

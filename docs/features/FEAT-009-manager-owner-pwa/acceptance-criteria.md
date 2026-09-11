@@ -8,6 +8,7 @@
 - Given an offline manager adjustment, when connectivity returns, then the command retries with its stable client ID and shows confirmed, duplicate, or reviewable status without storing an access token.
 - Given notification permission is denied, unavailable, or granted, then the PWA shows the corresponding state; granted notifications deep-link to the relevant alerts view when selected.
 - Given a manager or owner opens settings, then only an owner can view or update store configuration and stale updates remain reviewable without overwriting newer settings.
+- Given an authorized manager or owner views insights, then the PWA shows advisory source and validation metadata and cannot use insight output to mutate inventory, pricing, payments, or checkout.
 
 ## Failure and resilience behavior
 

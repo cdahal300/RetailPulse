@@ -116,12 +116,6 @@ public sealed class PostgresIdentityLifecycleService(string? connectionString) :
     {
         var connection = new NpgsqlConnection(connectionString);
         await connection.OpenAsync(cancellationToken);
-        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
-        await using var command = connection.CreateCommand();
-        command.Transaction = transaction;
-        command.CommandText = "SELECT pg_advisory_xact_lock(482901); CREATE TABLE IF NOT EXISTS identity_devices (tenant_id TEXT NOT NULL, store_id TEXT NOT NULL, device_id TEXT NOT NULL, version INTEGER NOT NULL, revoked BOOLEAN NOT NULL, PRIMARY KEY (tenant_id, store_id, device_id)); CREATE TABLE IF NOT EXISTS identity_device_commands (command_id TEXT PRIMARY KEY, command_type TEXT NOT NULL, outcome TEXT NOT NULL, event_json TEXT NULL); CREATE TABLE IF NOT EXISTS identity_role_assignments (tenant_id TEXT NOT NULL, store_id TEXT NOT NULL, subject_id TEXT NOT NULL, roles_json TEXT NOT NULL, version INTEGER NOT NULL, PRIMARY KEY (tenant_id, store_id, subject_id)); CREATE TABLE IF NOT EXISTS identity_role_commands (command_id TEXT PRIMARY KEY, outcome TEXT NOT NULL, event_json TEXT NULL);";
-        await command.ExecuteNonQueryAsync(cancellationToken);
-        await transaction.CommitAsync(cancellationToken);
         return connection;
     }
 

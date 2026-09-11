@@ -61,6 +61,10 @@ builder.Services.AddSingleton<IPushSubscriptionStore>(_ => new PostgresPushSubsc
 builder.Services.AddSingleton<IAnalyticsReportProvider, SimulatedAnalyticsReportProvider>();
 
 var app = builder.Build();
+if (!useSqliteCloudLedger && !string.IsNullOrWhiteSpace(postgresConnectionString))
+{
+    await PostgresMigrations.ApplyAsync(postgresConnectionString);
+}
 if (entraConfigured)
 {
     app.UseAuthentication();

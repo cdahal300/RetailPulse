@@ -61,12 +61,9 @@ public sealed class PostgresAlertsReader(string? connectionString) : IAlertsRead
     {
         var connection = new NpgsqlConnection(connectionString);
         await connection.OpenAsync(cancellationToken);
-        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
         await using var command = connection.CreateCommand();
-        command.Transaction = transaction;
-        command.CommandText = "SELECT pg_advisory_xact_lock(482901); CREATE TABLE IF NOT EXISTS inventory_balances (tenant_id TEXT NOT NULL, store_id TEXT NOT NULL, product_id TEXT NOT NULL, quantity INTEGER NOT NULL, version INTEGER NOT NULL, PRIMARY KEY (tenant_id, store_id, product_id)); CREATE TABLE IF NOT EXISTS inventory_thresholds (tenant_id TEXT NOT NULL, store_id TEXT NOT NULL, product_id TEXT NOT NULL, minimum_quantity INTEGER NOT NULL, version INTEGER NOT NULL, PRIMARY KEY (tenant_id, store_id, product_id)); CREATE TABLE IF NOT EXISTS sync_delivery_status (tenant_id TEXT NOT NULL, store_id TEXT NOT NULL, message_id TEXT NOT NULL, status TEXT NOT NULL, occurred_at TIMESTAMPTZ NOT NULL, last_attempt_at TIMESTAMPTZ NULL, PRIMARY KEY (tenant_id, store_id, message_id)); CREATE TABLE IF NOT EXISTS notification_preferences (tenant_id TEXT NOT NULL, store_id TEXT NOT NULL, subject_id TEXT NOT NULL, low_stock_enabled BOOLEAN NOT NULL, sync_failure_enabled BOOLEAN NOT NULL, updated_at TIMESTAMPTZ NOT NULL, PRIMARY KEY (tenant_id, store_id, subject_id));";
-        await command.ExecuteNonQueryAsync(cancellationToken);
-        await transaction.CommitAsync(cancellationToken);
+        command.CommandText = "SELECT 1;";
+        await command.ExecuteScalarAsync(cancellationToken);
         return connection;
     }
 

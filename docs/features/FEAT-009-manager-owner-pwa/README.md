@@ -2,7 +2,7 @@
 
 ## Status
 
-In progress. The MVP slices now include an Entra-authenticated manager dashboard with live sales and tenant/store-scoped sync-health data, plus authorized inventory commands.
+In progress. The MVP slices now include an Entra-authenticated manager dashboard with live sales and tenant/store-scoped sync-health data, plus authorized inventory commands that can queue safely while offline.
 
 ## Outcome
 

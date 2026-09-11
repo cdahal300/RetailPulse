@@ -5,6 +5,7 @@
 - Given an authenticated manager or owner, when the PWA loads, then role-aware sales, inventory, sync-health, alerts, settings, and AI views show only authorized data.
 - Given a supported desktop, tablet, Android, or iOS browser, when the user navigates and performs an allowed command, then controls remain usable and status distinguishes pending from confirmed.
 - Given an offline launch, when cached data exists, then the PWA shows clearly labeled stale read-only data and queues only explicitly supported commands.
+- Given an offline manager adjustment, when connectivity returns, then the command retries with its stable client ID and shows confirmed, duplicate, or reviewable status without storing an access token.
 
 ## Failure and resilience behavior
 

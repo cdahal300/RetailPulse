@@ -74,6 +74,16 @@ type SyncHealth = {
   deadLetterCount: number
 }
 
+type QueuedInventoryCommand = {
+  tenantId: string
+  storeId: string
+  productId: string
+  quantityDelta: number
+  reason: string
+  commandId: string
+  expectedVersion: number
+}
+
 const stores: StoreOption[] = [
   { id: 'store-1', name: 'Bardstown Road', market: 'Louisville' },
   { id: 'store-2', name: 'South End Market', market: 'Louisville' },
@@ -82,6 +92,7 @@ const stores: StoreOption[] = [
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? ''
 const demoMode = import.meta.env.VITE_DEMO_MODE === 'true'
 const cacheKeyPrefix = 'retailpulse.analytics.sales'
+const commandQueueKey = 'retailpulse.manager.commands.v1'
 
 function App() {
   const [storeId, setStoreId] = useState(stores[0].id)
@@ -96,6 +107,7 @@ function App() {
   const [adjustmentSubmitting, setAdjustmentSubmitting] = useState(false)
   const [syncHealth, setSyncHealth] = useState<SyncHealth | null>(null)
   const [syncHealthError, setSyncHealthError] = useState<string | null>(null)
+  const [pendingCommandCount, setPendingCommandCount] = useState(() => readQueuedCommands().length)
 
   useEffect(() => {
     if (demoMode || !entraConfigured) {
@@ -140,6 +152,15 @@ function App() {
       cancelled = true
     }
   }, [session, storeId, refreshKey])
+
+  useEffect(() => {
+    const flush = () => {
+      if (session?.accessToken) void flushQueuedCommands(storeId, session.accessToken, setPendingCommandCount, setAdjustmentStatus)
+    }
+    window.addEventListener('online', flush)
+    flush()
+    return () => window.removeEventListener('online', flush)
+  }, [session, storeId])
 
   useEffect(() => {
     let cancelled = false
@@ -292,7 +313,7 @@ function App() {
                 </div>
               ))}
             </div>
-            <form className="inventory-form" onSubmit={(event) => void submitInventoryAdjustment(event, storeId, session?.accessToken, setAdjustmentStatus, setAdjustmentSubmitting)}>
+            <form className="inventory-form" onSubmit={(event) => void submitInventoryAdjustment(event, storeId, session?.accessToken, setAdjustmentStatus, setAdjustmentSubmitting, setPendingCommandCount)}>
               <label>
                 Product ID
                 <input name="productId" defaultValue="coffee" required />
@@ -321,7 +342,7 @@ function App() {
               <AlertTriangle size={20} />
             </div>
             <ul className="check-list">
-              <li><span className={syncHealth && syncHealth.pendingCount > 0 ? 'warning-dot' : ''} />{syncHealth ? syncHealth.pendingCount === 0 ? 'Sync queue is clear.' : `${syncHealth.pendingCount} item${syncHealth.pendingCount === 1 ? '' : 's'} pending synchronization.` : syncHealthError ?? 'Checking sync health...'}</li>
+              <li><span className={syncHealth && (syncHealth.pendingCount > 0 || pendingCommandCount > 0) ? 'warning-dot' : ''} />{pendingCommandCount > 0 ? `${pendingCommandCount} manager command${pendingCommandCount === 1 ? '' : 's'} pending locally.` : syncHealth ? syncHealth.pendingCount === 0 ? 'Sync queue is clear.' : `${syncHealth.pendingCount} item${syncHealth.pendingCount === 1 ? '' : 's'} pending synchronization.` : syncHealthError ?? 'Checking sync health...'}</li>
               <li><span className={syncHealth && (syncHealth.retryCount > 0 || syncHealth.conflictCount > 0 || syncHealth.deadLetterCount > 0) ? 'warning-dot' : ''} />{syncHealth ? `${syncHealth.retryCount} retries · ${syncHealth.conflictCount} conflicts · ${syncHealth.deadLetterCount} dead letters.` : 'Tenant and store scope is enforced by the server.'}</li>
               <li><span />Last successful sync: {syncHealth?.lastSuccessAt ? formatTime(syncHealth.lastSuccessAt) : 'No completed sync recorded.'}</li>
             </ul>
@@ -429,6 +450,7 @@ async function submitInventoryAdjustment(
   accessToken: string | undefined,
   setStatus: (status: string | null) => void,
   setSubmitting: (submitting: boolean) => void,
+  setPendingCount: (count: number) => void,
 ) {
   event.preventDefault()
   if (!accessToken) {
@@ -437,22 +459,20 @@ async function submitInventoryAdjustment(
   }
 
   const form = new FormData(event.currentTarget)
-  const commandId = crypto.randomUUID()
+  const command: QueuedInventoryCommand = {
+    tenantId: 'tenant-1',
+    storeId,
+    productId: String(form.get('productId') ?? ''),
+    quantityDelta: Number(form.get('quantityDelta')),
+    reason: String(form.get('reason') ?? ''),
+    commandId: crypto.randomUUID(),
+    expectedVersion: 0,
+  }
   setSubmitting(true)
   setStatus(null)
 
   try {
-    const response = await fetch(`${apiBaseUrl.replace(/\/$/, '')}/api/v1/tenants/tenant-1/stores/${storeId}/manager/inventory-adjustments`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        productId: form.get('productId'),
-        quantityDelta: Number(form.get('quantityDelta')),
-        reason: form.get('reason'),
-        commandId,
-        expectedVersion: 0,
-      }),
-    })
+    const response = await postInventoryCommand(command, accessToken)
     const body = await response.json().catch(() => ({})) as { outcome?: string; error?: string }
     if (!response.ok) {
       setStatus(body.error ?? `Inventory command failed (${response.status}).`)
@@ -460,10 +480,73 @@ async function submitInventoryAdjustment(
     }
     setStatus(`Inventory command ${body.outcome?.toLowerCase() ?? 'accepted'}.`)
   } catch {
-    setStatus('Inventory command could not reach the API.')
+    persistQueuedCommands([...readQueuedCommands(), command])
+    setPendingCount(readQueuedCommands().length)
+    setStatus('Inventory command queued while offline.')
   } finally {
     setSubmitting(false)
   }
+}
+
+async function postInventoryCommand(command: QueuedInventoryCommand, accessToken: string): Promise<Response> {
+  return fetch(`${apiBaseUrl.replace(/\/$/, '')}/api/v1/tenants/${command.tenantId}/stores/${command.storeId}/manager/inventory-adjustments`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify(command),
+  })
+}
+
+async function flushQueuedCommands(
+  storeId: string,
+  accessToken: string,
+  setPendingCount: (count: number) => void,
+  setStatus: (status: string | null) => void,
+) {
+  const queued = readQueuedCommands()
+  const remaining: QueuedInventoryCommand[] = []
+  let confirmed = 0
+  for (const command of queued) {
+    if (command.storeId !== storeId) {
+      remaining.push(command)
+      continue
+    }
+    try {
+      const response = await postInventoryCommand(command, accessToken)
+      if (response.ok) {
+        confirmed += 1
+      } else if (response.status === 409) {
+        setStatus('A queued inventory command needs review because stock changed.')
+      } else {
+        remaining.push(command)
+      }
+    } catch {
+      remaining.push(command)
+    }
+  }
+  persistQueuedCommands(remaining)
+  setPendingCount(remaining.length)
+  if (confirmed > 0 && remaining.length === 0) setStatus(`${confirmed} queued inventory command${confirmed === 1 ? '' : 's'} confirmed.`)
+}
+
+function readQueuedCommands(): QueuedInventoryCommand[] {
+  try {
+    const value = JSON.parse(localStorage.getItem(commandQueueKey) ?? '[]') as unknown
+    return Array.isArray(value) ? value.filter(isQueuedInventoryCommand) : []
+  } catch {
+    return []
+  }
+}
+
+function persistQueuedCommands(commands: QueuedInventoryCommand[]) {
+  localStorage.setItem(commandQueueKey, JSON.stringify(commands))
+}
+
+function isQueuedInventoryCommand(value: unknown): value is QueuedInventoryCommand {
+  if (!value || typeof value !== 'object') return false
+  const command = value as Partial<QueuedInventoryCommand>
+  return typeof command.tenantId === 'string' && typeof command.storeId === 'string' && typeof command.productId === 'string' &&
+    typeof command.quantityDelta === 'number' && typeof command.reason === 'string' && typeof command.commandId === 'string' &&
+    typeof command.expectedVersion === 'number'
 }
 
 async function handleSignIn(

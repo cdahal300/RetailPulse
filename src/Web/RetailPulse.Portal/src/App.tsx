@@ -129,6 +129,8 @@ const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? ''
 const demoMode = import.meta.env.VITE_DEMO_MODE === 'true'
 const cacheKeyPrefix = 'retailpulse.analytics.sales'
 const commandQueueKey = 'retailpulse.manager.commands.v1'
+const storageScopeKey = 'retailpulse.portal.storage-scope'
+const cacheMaxAgeMs = 24 * 60 * 60 * 1000
 
 function App() {
   const [storeId, setStoreId] = useState(stores[0].id)
@@ -143,7 +145,7 @@ function App() {
   const [adjustmentSubmitting, setAdjustmentSubmitting] = useState(false)
   const [syncHealth, setSyncHealth] = useState<SyncHealth | null>(null)
   const [syncHealthError, setSyncHealthError] = useState<string | null>(null)
-  const [pendingCommandCount, setPendingCommandCount] = useState(() => readQueuedCommands().length)
+  const [pendingCommandCount, setPendingCommandCount] = useState(0)
   const [alerts, setAlerts] = useState<OperationalAlert[]>([])
   const [alertsError, setAlertsError] = useState<string | null>(null)
   const [notificationPreferences, setNotificationPreferences] = useState<NotificationPreferences>({ lowStockEnabled: true, syncFailureEnabled: true })
@@ -174,7 +176,9 @@ function App() {
     async function loadReport() {
       setDashboardState('loading')
       setLastError(null)
-      const cached = readCachedReport(storeId)
+      if (!demoMode && entraConfigured && !session) return
+      const scope = getStorageScope(session)
+      const cached = readCachedReport(storeId, scope)
 
       try {
         if (!demoMode && entraConfigured && session && (!session.tenantId || !session.roles.length)) {
@@ -185,7 +189,7 @@ function App() {
         if (cancelled) return
         setReport(fresh)
         setDashboardState('fresh')
-        localStorage.setItem(cacheKey(storeId), JSON.stringify(fresh))
+        localStorage.setItem(cacheKey(storeId, scope), JSON.stringify({ cachedAt: Date.now(), report: fresh }))
       } catch (error) {
         if (cancelled) return
         setReport(cached ?? fallbackReport(storeId))
@@ -257,12 +261,22 @@ function App() {
 
   useEffect(() => {
     const flush = () => {
-      if (session?.accessToken) void flushQueuedCommands(storeId, session.accessToken, setPendingCommandCount, setAdjustmentStatus)
+      if (session?.accessToken) void flushQueuedCommands(storeId, session.accessToken, getStorageScope(session), setPendingCommandCount, setAdjustmentStatus)
     }
+    setPendingCommandCount(readQueuedCommands(getStorageScope(session)).length)
     window.addEventListener('online', flush)
     flush()
     return () => window.removeEventListener('online', flush)
   }, [session, storeId])
+
+  useEffect(() => {
+    if (!session) return
+    removeLegacyPortalStorage()
+    const scope = getStorageScope(session)
+    const previousScope = localStorage.getItem(storageScopeKey)
+    if (previousScope && previousScope !== scope) clearPortalStorage(previousScope)
+    localStorage.setItem(storageScopeKey, scope)
+  }, [session])
 
   useEffect(() => {
     let cancelled = false
@@ -329,7 +343,7 @@ function App() {
             {authLoading ? 'Checking session...' : session ? 'Refresh session' : 'Sign in with Entra ID'}
           </button>
         ) : null}
-        {session ? <button className="sign-out-button" type="button" onClick={() => void handleSignOut(setSession, setAuthError)}>Sign out</button> : null}
+        {session ? <button className="sign-out-button" type="button" onClick={() => void handleSignOut(setSession, setAuthError, getStorageScope(session))}>Sign out</button> : null}
       </aside>
 
       <section className="workspace" aria-label="Manager dashboard">
@@ -415,7 +429,7 @@ function App() {
                 </div>
               ))}
             </div>
-            <form className="inventory-form" onSubmit={(event) => void submitInventoryAdjustment(event, storeId, session?.accessToken, setAdjustmentStatus, setAdjustmentSubmitting, setPendingCommandCount)}>
+            <form className="inventory-form" onSubmit={(event) => void submitInventoryAdjustment(event, storeId, session?.accessToken, getStorageScope(session), setAdjustmentStatus, setAdjustmentSubmitting, setPendingCommandCount)}>
               <label>
                 Product ID
                 <input name="productId" defaultValue="coffee" required />
@@ -708,6 +722,7 @@ async function submitInventoryAdjustment(
   event: React.FormEvent<HTMLFormElement>,
   storeId: string,
   accessToken: string | undefined,
+  scope: string,
   setStatus: (status: string | null) => void,
   setSubmitting: (submitting: boolean) => void,
   setPendingCount: (count: number) => void,
@@ -740,8 +755,8 @@ async function submitInventoryAdjustment(
     }
     setStatus(`Inventory command ${body.outcome?.toLowerCase() ?? 'accepted'}.`)
   } catch {
-    persistQueuedCommands([...readQueuedCommands(), command])
-    setPendingCount(readQueuedCommands().length)
+    persistQueuedCommands(scope, [...readQueuedCommands(scope), command])
+    setPendingCount(readQueuedCommands(scope).length)
     setStatus('Inventory command queued while offline.')
   } finally {
     setSubmitting(false)
@@ -759,10 +774,11 @@ async function postInventoryCommand(command: QueuedInventoryCommand, accessToken
 async function flushQueuedCommands(
   storeId: string,
   accessToken: string,
+  scope: string,
   setPendingCount: (count: number) => void,
   setStatus: (status: string | null) => void,
 ) {
-  const queued = readQueuedCommands()
+  const queued = readQueuedCommands(scope)
   const remaining: QueuedInventoryCommand[] = []
   let confirmed = 0
   for (const command of queued) {
@@ -783,22 +799,22 @@ async function flushQueuedCommands(
       remaining.push(command)
     }
   }
-  persistQueuedCommands(remaining)
+  persistQueuedCommands(scope, remaining)
   setPendingCount(remaining.length)
   if (confirmed > 0 && remaining.length === 0) setStatus(`${confirmed} queued inventory command${confirmed === 1 ? '' : 's'} confirmed.`)
 }
 
-function readQueuedCommands(): QueuedInventoryCommand[] {
+function readQueuedCommands(scope: string): QueuedInventoryCommand[] {
   try {
-    const value = JSON.parse(localStorage.getItem(commandQueueKey) ?? '[]') as unknown
+    const value = JSON.parse(localStorage.getItem(`${commandQueueKey}.${scope}`) ?? '[]') as unknown
     return Array.isArray(value) ? value.filter(isQueuedInventoryCommand) : []
   } catch {
     return []
   }
 }
 
-function persistQueuedCommands(commands: QueuedInventoryCommand[]) {
-  localStorage.setItem(commandQueueKey, JSON.stringify(commands))
+function persistQueuedCommands(scope: string, commands: QueuedInventoryCommand[]) {
+  localStorage.setItem(`${commandQueueKey}.${scope}`, JSON.stringify(commands))
 }
 
 function isQueuedInventoryCommand(value: unknown): value is QueuedInventoryCommand {
@@ -824,8 +840,9 @@ async function handleSignIn(
   }
 }
 
-async function handleSignOut(setSession: (session: PortalSession | null) => void, setAuthError: (error: string | null) => void) {
+async function handleSignOut(setSession: (session: PortalSession | null) => void, setAuthError: (error: string | null) => void, scope: string) {
   try {
+    clearPortalStorage(scope)
     await signOut()
     setSession(null)
   } catch (error) {
@@ -878,20 +895,42 @@ function fallbackReport(storeId: string): SalesReport {
   }
 }
 
-function readCachedReport(storeId: string): SalesReport | null {
-  const cached = localStorage.getItem(cacheKey(storeId))
+function readCachedReport(storeId: string, scope: string): SalesReport | null {
+  const cached = localStorage.getItem(cacheKey(storeId, scope))
   if (!cached) return null
 
   try {
-    return JSON.parse(cached) as SalesReport
+    const entry = JSON.parse(cached) as { cachedAt?: number; report?: SalesReport }
+    if (!entry.cachedAt || !entry.report || Date.now() - entry.cachedAt > cacheMaxAgeMs) {
+      localStorage.removeItem(cacheKey(storeId, scope))
+      return null
+    }
+    return entry.report
   } catch {
-    localStorage.removeItem(cacheKey(storeId))
+    localStorage.removeItem(cacheKey(storeId, scope))
     return null
   }
 }
 
-function cacheKey(storeId: string) {
-  return `${cacheKeyPrefix}.${storeId}`
+function cacheKey(storeId: string, scope: string) {
+  return `${cacheKeyPrefix}.${scope}.${storeId}`
+}
+
+function getStorageScope(session: PortalSession | null) {
+  return session?.account.homeAccountId ?? 'demo'
+}
+
+function clearPortalStorage(scope: string) {
+  for (let index = localStorage.length - 1; index >= 0; index -= 1) {
+    const key = localStorage.key(index)
+    if (key?.startsWith(`${cacheKeyPrefix}.${scope}.`) || key === `${commandQueueKey}.${scope}`) localStorage.removeItem(key)
+  }
+  localStorage.removeItem(storageScopeKey)
+}
+
+function removeLegacyPortalStorage() {
+  localStorage.removeItem(commandQueueKey)
+  for (const store of stores) localStorage.removeItem(`${cacheKeyPrefix}.${store.id}`)
 }
 
 function formatMoney(minorUnits: number, currency: string) {

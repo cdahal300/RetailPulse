@@ -1,4 +1,4 @@
-const CACHE_NAME = 'retailpulse-portal-v1'
+const CACHE_NAME = 'retailpulse-portal-v2'
 const OFFLINE_URL = '/offline.html'
 
 self.addEventListener('install', (event) => {

@@ -10,6 +10,7 @@
 - Given a manager or owner opens settings, then only an owner can view or update store configuration and stale updates remain reviewable without overwriting newer settings.
 - Given an authorized manager or owner views insights, then the PWA shows advisory source and validation metadata and cannot use insight output to mutate inventory, pricing, payments, or checkout.
 - Given a configured VAPID provider, when a manager enables notifications, then the browser subscription is registered for the authenticated tenant, store, and user; without provider configuration, the PWA shows an unavailable state.
+- Given a privileged action or revoked identity, then the cloud records the audit context durably and rejects later requests using the persisted tenant-scoped revocation state.
 
 ## Failure and resilience behavior
 

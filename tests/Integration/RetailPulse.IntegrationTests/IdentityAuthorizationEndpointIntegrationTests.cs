@@ -1,20 +1,22 @@
 using System.Net;
+using System.Net.Http.Json;
 using System.Text.Json;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Configuration;
 using RetailPulse.BuildingBlocks;
 using RetailPulse.Cloud;
 using RetailPulse.Edge;
 
 namespace RetailPulse.IntegrationTests;
 
-public sealed class IdentityAuthorizationEndpointIntegrationTests : IClassFixture<WebApplicationFactory<CloudApiMarker>>, IClassFixture<WebApplicationFactory<EdgeApiMarker>>
+public sealed class IdentityAuthorizationEndpointIntegrationTests : IClassFixture<TestCloudFactory>, IClassFixture<WebApplicationFactory<EdgeApiMarker>>
 {
     private readonly HttpClient cloudClient;
     private readonly HttpClient edgeClient;
 
-    public IdentityAuthorizationEndpointIntegrationTests(WebApplicationFactory<CloudApiMarker> cloudFactory, WebApplicationFactory<EdgeApiMarker> edgeFactory)
+    public IdentityAuthorizationEndpointIntegrationTests(TestCloudFactory cloudFactory, WebApplicationFactory<EdgeApiMarker> edgeFactory)
     {
         cloudClient = cloudFactory.CreateClient(new WebApplicationFactoryClientOptions { BaseAddress = new Uri("https://localhost") });
         edgeClient = edgeFactory.CreateClient(new WebApplicationFactoryClientOptions { BaseAddress = new Uri("https://localhost") });
@@ -49,6 +51,7 @@ public sealed class IdentityAuthorizationEndpointIntegrationTests : IClassFixtur
             roles: "Manager",
             issuedAt: DateTimeOffset.UtcNow.AddMinutes(-5),
             expiresAt: DateTimeOffset.UtcNow.AddMinutes(30));
+        AddInventoryAdjustment(managerRequest, "inventory-adjustment-1");
         var manager = await cloudClient.SendAsync(managerRequest);
         Assert.Equal(HttpStatusCode.OK, manager.StatusCode);
     }
@@ -200,7 +203,7 @@ public sealed class IdentityAuthorizationEndpointIntegrationTests : IClassFixtur
     [Fact]
     public async Task Cloud_role_change_revokes_existing_subject_session()
     {
-        await using var factory = new WebApplicationFactory<CloudApiMarker>();
+        await using var factory = new TestCloudFactory();
         using var client = factory.CreateClient(new WebApplicationFactoryClientOptions { BaseAddress = new Uri("https://localhost") });
 
         using var roleChangeRequest = CloudRequest(
@@ -341,7 +344,7 @@ public sealed class IdentityAuthorizationEndpointIntegrationTests : IClassFixtur
     public async Task Cloud_emits_audit_events_for_authorized_and_rejected_requests()
     {
         var auditEmitter = new InMemoryIdentityAuditEmitter();
-        await using var factory = new WebApplicationFactory<CloudApiMarker>().WithWebHostBuilder(builder =>
+        await using var factory = new TestCloudFactory().WithWebHostBuilder(builder =>
         {
             builder.ConfigureServices(services =>
             {
@@ -362,6 +365,7 @@ public sealed class IdentityAuthorizationEndpointIntegrationTests : IClassFixtur
             issuedAt: DateTimeOffset.UtcNow.AddMinutes(-5),
             expiresAt: DateTimeOffset.UtcNow.AddMinutes(30));
         managerRequest.Headers.Add("X-Correlation-Id", "corr-ok-1");
+        AddInventoryAdjustment(managerRequest, "inventory-adjustment-audit-1", productId: "tea");
         var managerResult = await client.SendAsync(managerRequest);
 
         using var cashierRequest = CloudRequest(
@@ -457,6 +461,16 @@ public sealed class IdentityAuthorizationEndpointIntegrationTests : IClassFixtur
         return request;
     }
 
+    private static void AddInventoryAdjustment(HttpRequestMessage request, string commandId, int expectedVersion = 0, string productId = "coffee") =>
+        request.Content = JsonContent.Create(new
+        {
+            ProductId = productId,
+            QuantityDelta = 2,
+            Reason = "Cycle count",
+            CommandId = commandId,
+            ExpectedVersion = expectedVersion
+        });
+
     private static HttpRequestMessage CloudRequest(
         string path,
         string tokenId,
@@ -496,6 +510,31 @@ public sealed class IdentityAuthorizationEndpointIntegrationTests : IClassFixtur
         request.Headers.Add("X-RetailPulse-Expires-At", expiresAt.ToString("O"));
         request.Headers.Add("X-RetailPulse-Session-Id", sessionId);
         return request;
+    }
+}
+
+public sealed class TestCloudFactory : WebApplicationFactory<CloudApiMarker>
+{
+    private readonly string databasePath = System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"retailpulse-cloud-test-{Guid.NewGuid():N}.db");
+
+    protected override void ConfigureWebHost(Microsoft.AspNetCore.Hosting.IWebHostBuilder builder)
+    {
+        builder.UseSetting("RetailPulse:UseSqliteCloudLedger", "true");
+        builder.UseSetting("RetailPulse:CloudDatabasePath", databasePath);
+        builder.ConfigureAppConfiguration((_, configuration) => configuration.AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["RetailPulse:CloudDatabasePath"] = databasePath,
+            ["RetailPulse:UseSqliteCloudLedger"] = "true"
+        }));
+    }
+
+    protected override void Dispose(bool disposing)
+    {
+        base.Dispose(disposing);
+        foreach (var path in new[] { databasePath, $"{databasePath}-wal", $"{databasePath}-shm" })
+        {
+            if (File.Exists(path)) File.Delete(path);
+        }
     }
 }
 

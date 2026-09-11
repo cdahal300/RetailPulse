@@ -19,7 +19,7 @@ public sealed class PostgresMigrationsIntegrationTests
             await create.ExecuteNonQueryAsync();
         }
 
-        var connectionString = $"Host=postgres;Port=5432;Database={databaseName};Username=retailpulse;Password=retailpulse-dev";
+        var connectionString = $"Host={postgresHost};Port=5432;Database={databaseName};Username=retailpulse;Password=retailpulse-dev";
         try
         {
             await PostgresMigrations.ApplyAsync(connectionString);

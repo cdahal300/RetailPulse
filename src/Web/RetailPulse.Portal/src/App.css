@@ -483,6 +483,33 @@ select {
 	cursor: not-allowed;
 }
 
+.settings-form {
+	display: grid;
+	gap: 10px;
+}
+
+.settings-form label {
+	display: grid;
+	gap: 5px;
+	color: #66776d;
+	font-size: 12px;
+	font-weight: 700;
+}
+
+.settings-form input:not([type='checkbox']) {
+	min-height: 38px;
+	padding: 0 10px;
+	border: 1px solid #c8d5cc;
+	border-radius: 6px;
+	background: #fbfcfa;
+	color: #183d32;
+	font: inherit;
+}
+
+.settings-form input[type='checkbox'] {
+	accent-color: #2f654e;
+}
+
 .check-list {
 	padding: 0;
 	list-style: none;

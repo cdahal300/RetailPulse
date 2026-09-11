@@ -23,7 +23,7 @@
 
 ## Release evidence
 
-- Test command: PWA package test/lint/build, Playwright suites, accessibility checks, and focused contract tests.
+- Test command: PWA package test/lint/build, `npm run test:e2e` Playwright desktop/phone suites, accessibility checks, and focused contract tests.
 - Required environment: staging cloud APIs, test identities/roles/stores, HTTPS origin, push test service, and iOS/Android devices.
 - Evidence artifact: browser/device matrix, accessibility report, cache/offline recording, bundle metrics, and auth denial report.
 - Known gaps: browser push support and background behavior vary by OS/version and require a maintained support matrix.

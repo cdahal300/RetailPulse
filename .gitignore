@@ -20,6 +20,8 @@ coverage/
 # Node tooling
 node_modules/
 dist/
+playwright-report/
+test-results/
 
 # Local databases and generated diagrams
 *.db

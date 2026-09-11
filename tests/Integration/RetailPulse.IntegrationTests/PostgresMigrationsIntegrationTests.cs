@@ -9,7 +9,8 @@ public sealed class PostgresMigrationsIntegrationTests
     public async Task Postgres_migrations_are_repeatable_and_create_cloud_schema()
     {
         var databaseName = $"retailpulse_test_{Guid.NewGuid():N}";
-        var adminConnectionString = "Host=postgres;Port=5432;Database=postgres;Username=retailpulse;Password=retailpulse-dev";
+        var postgresHost = Environment.GetEnvironmentVariable("POSTGRES_TEST_HOST") ?? "127.0.0.1";
+        var adminConnectionString = $"Host={postgresHost};Port=5432;Database=postgres;Username=retailpulse;Password=retailpulse-dev";
         await using (var admin = new NpgsqlConnection(adminConnectionString))
         {
             await admin.OpenAsync();

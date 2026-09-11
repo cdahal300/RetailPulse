@@ -47,6 +47,7 @@ builder.Services.AddSingleton<ICatalogInventoryAuthorization, CloudInventoryAuth
 builder.Services.AddSingleton<CatalogInventoryService>();
 builder.Services.AddSingleton<IInventoryCommandService, InMemoryInventoryCommandService>();
 builder.Services.AddSingleton<ISyncHealthReader>(_ => new PostgresSyncHealthReader(useSqliteCloudLedger ? null : postgresConnectionString));
+builder.Services.AddSingleton<IAlertsReader>(_ => new PostgresAlertsReader(useSqliteCloudLedger ? null : postgresConnectionString));
 builder.Services.AddSingleton<IAnalyticsReportProvider, SimulatedAnalyticsReportProvider>();
 
 var app = builder.Build();
@@ -132,6 +133,33 @@ app.MapGet("/api/v1/tenants/{tenantId}/stores/{storeId}/sync-health",
         }
 
         return Results.Ok(await healthReader.GetAsync(new TenantStoreScope(tenantId, storeId), request.HttpContext.RequestAborted));
+    });
+
+app.MapGet("/api/v1/tenants/{tenantId}/stores/{storeId}/alerts",
+    async (string tenantId, string storeId, HttpRequest request, IIdentityAuditEmitter auditEmitter, IIdentityRevocationStore revocations, IAlertsReader alerts) =>
+    {
+        var authorization = await AuthorizeAsync(request, new TenantStoreScope(tenantId, storeId), AuthorizationAction.ViewSyncHealth, auditEmitter, revocations);
+        if (authorization.Result is not null) return authorization.Result;
+        return Results.Ok(await alerts.GetAlertsAsync(new TenantStoreScope(tenantId, storeId), request.HttpContext.RequestAborted));
+    });
+
+app.MapGet("/api/v1/tenants/{tenantId}/stores/{storeId}/notification-preferences",
+    async (string tenantId, string storeId, HttpRequest request, IIdentityAuditEmitter auditEmitter, IIdentityRevocationStore revocations, IAlertsReader alerts) =>
+    {
+        var authorization = await AuthorizeAsync(request, new TenantStoreScope(tenantId, storeId), AuthorizationAction.ManageNotificationPreferences, auditEmitter, revocations);
+        if (authorization.Result is not null) return authorization.Result;
+        return Results.Ok(await alerts.GetPreferencesAsync(new TenantStoreScope(tenantId, storeId), authorization.Token!.SubjectId, request.HttpContext.RequestAborted));
+    });
+
+app.MapPut("/api/v1/tenants/{tenantId}/stores/{storeId}/notification-preferences",
+    async (string tenantId, string storeId, HttpRequest request, IIdentityAuditEmitter auditEmitter, IIdentityRevocationStore revocations, IAlertsReader alerts) =>
+    {
+        var authorization = await AuthorizeAsync(request, new TenantStoreScope(tenantId, storeId), AuthorizationAction.ManageNotificationPreferences, auditEmitter, revocations);
+        if (authorization.Result is not null) return authorization.Result;
+        var input = await request.ReadFromJsonAsync<NotificationPreferencesRequest>(request.HttpContext.RequestAborted);
+        if (input is null) return Results.BadRequest(new { Error = "Notification preference values are required." });
+        var saved = await alerts.SetPreferencesAsync(new NotificationPreferences(tenantId, storeId, authorization.Token!.SubjectId, input.LowStockEnabled, input.SyncFailureEnabled, DateTimeOffset.UtcNow), request.HttpContext.RequestAborted);
+        return Results.Ok(saved);
     });
 
 app.MapPost("/api/v1/tenants/{tenantId}/stores/{storeId}/manager/inventory-adjustments",
@@ -691,3 +719,4 @@ static bool TryParseRoles(string rolesRaw, out IReadOnlyCollection<IdentityRole>
 }
 
 record InventoryAdjustmentRequest(string ProductId, int QuantityDelta, string Reason, string CommandId, int ExpectedVersion);
+record NotificationPreferencesRequest(bool LowStockEnabled, bool SyncFailureEnabled);

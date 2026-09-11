@@ -422,6 +422,43 @@ select {
 	font-size: 13px;
 }
 
+.alert-list,
+.preference-list {
+	display: grid;
+	gap: 12px;
+}
+
+.alert-row {
+	display: grid;
+	gap: 4px;
+	padding: 10px 0;
+	border-bottom: 1px solid #dce5de;
+}
+
+.alert-row p,
+.alert-row span,
+.empty-state {
+	margin: 0;
+	color: #66776d;
+	font-size: 13px;
+}
+
+.alert-row span {
+	font-size: 12px;
+}
+
+.preference-list {
+	margin-top: 16px;
+	padding-top: 14px;
+	border-top: 1px solid #dce5de;
+	color: #66776d;
+	font-size: 13px;
+}
+
+.preference-list input {
+	accent-color: #2f654e;
+}
+
 .check-list {
 	padding: 0;
 	list-style: none;

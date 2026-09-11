@@ -40,6 +40,7 @@ builder.Services.AddSingleton<ICatalogRepository, CloudCatalogRepository>();
 var cloudDatabasePath = builder.Configuration["RetailPulse:CloudDatabasePath"] ?? Path.Combine(AppContext.BaseDirectory, "retailpulse-cloud.db");
 var postgresConnectionString = builder.Configuration.GetConnectionString("Postgres");
 var useSqliteCloudLedger = builder.Configuration.GetValue<bool>("RetailPulse:UseSqliteCloudLedger");
+var pushVapidPublicKey = builder.Configuration["Push:VapidPublicKey"];
 builder.Services.AddSingleton<IInventoryLedgerRepository>(_ => useSqliteCloudLedger || string.IsNullOrWhiteSpace(postgresConnectionString)
     ? new SqliteInventoryLedger(cloudDatabasePath)
     : new PostgresInventoryLedger(postgresConnectionString));
@@ -50,6 +51,7 @@ builder.Services.AddSingleton<ISyncHealthReader>(_ => new PostgresSyncHealthRead
 builder.Services.AddSingleton<IAlertsReader>(_ => new PostgresAlertsReader(useSqliteCloudLedger ? null : postgresConnectionString));
 builder.Services.AddSingleton<IStoreSettingsRepository>(_ => new PostgresStoreSettingsRepository(useSqliteCloudLedger ? null : postgresConnectionString));
 builder.Services.AddSingleton<IInsightsService, InMemoryInsightsService>();
+builder.Services.AddSingleton<IPushSubscriptionStore>(_ => new PostgresPushSubscriptionStore(useSqliteCloudLedger ? null : postgresConnectionString));
 builder.Services.AddSingleton<IAnalyticsReportProvider, SimulatedAnalyticsReportProvider>();
 
 var app = builder.Build();
@@ -202,6 +204,28 @@ app.MapGet("/api/v1/tenants/{tenantId}/stores/{storeId}/notification-preferences
         var authorization = await AuthorizeAsync(request, new TenantStoreScope(tenantId, storeId), AuthorizationAction.ManageNotificationPreferences, auditEmitter, revocations);
         if (authorization.Result is not null) return authorization.Result;
         return Results.Ok(await alerts.GetPreferencesAsync(new TenantStoreScope(tenantId, storeId), authorization.Token!.SubjectId, request.HttpContext.RequestAborted));
+    });
+
+app.MapGet("/api/v1/tenants/{tenantId}/stores/{storeId}/push/public-key",
+    async (string tenantId, string storeId, HttpRequest request, IIdentityAuditEmitter auditEmitter, IIdentityRevocationStore revocations) =>
+    {
+        var authorization = await AuthorizeAsync(request, new TenantStoreScope(tenantId, storeId), AuthorizationAction.ManageNotificationPreferences, auditEmitter, revocations);
+        if (authorization.Result is not null) return authorization.Result;
+        return string.IsNullOrWhiteSpace(pushVapidPublicKey) ? Results.NotFound() : Results.Ok(new { publicKey = pushVapidPublicKey });
+    });
+
+app.MapPut("/api/v1/tenants/{tenantId}/stores/{storeId}/push-subscription",
+    async (string tenantId, string storeId, HttpRequest request, IIdentityAuditEmitter auditEmitter, IIdentityRevocationStore revocations, IPushSubscriptionStore subscriptions) =>
+    {
+        var authorization = await AuthorizeAsync(request, new TenantStoreScope(tenantId, storeId), AuthorizationAction.ManageNotificationPreferences, auditEmitter, revocations);
+        if (authorization.Result is not null) return authorization.Result;
+        var input = await request.ReadFromJsonAsync<PushSubscriptionRequest>(request.HttpContext.RequestAborted);
+        if (input is null || string.IsNullOrWhiteSpace(input.Endpoint) || string.IsNullOrWhiteSpace(input.P256dh) || string.IsNullOrWhiteSpace(input.Auth))
+        {
+            return Results.BadRequest(new { Error = "Push endpoint and encryption keys are required." });
+        }
+        await subscriptions.RegisterAsync(new PushSubscription(tenantId, storeId, authorization.Token!.SubjectId, input.Endpoint, input.P256dh, input.Auth, DateTimeOffset.UtcNow), request.HttpContext.RequestAborted);
+        return Results.Accepted();
     });
 
 app.MapPut("/api/v1/tenants/{tenantId}/stores/{storeId}/notification-preferences",
@@ -775,3 +799,4 @@ record InventoryAdjustmentRequest(string ProductId, int QuantityDelta, string Re
 record NotificationPreferencesRequest(bool LowStockEnabled, bool SyncFailureEnabled);
 record StoreSettingsRequest(string DisplayName, string TimeZone, string Currency, bool InventoryAdjustmentsEnabled, int ExpectedVersion);
 record InsightRequestBody(string InsightType, string RequestId, string SourceVersion);
+record PushSubscriptionRequest(string Endpoint, string P256dh, string Auth);

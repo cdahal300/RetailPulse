@@ -478,7 +478,7 @@ function App() {
               <label><input type="checkbox" checked={notificationPreferences.syncFailureEnabled} disabled={preferencesSaving || !session} onChange={(event) => void saveNotificationPreferences(storeId, session?.accessToken, { ...notificationPreferences, syncFailureEnabled: event.target.checked }, setNotificationPreferences, setPreferencesSaving)} /> Sync-failure notifications</label>
               <div className="notification-actions">
                 <span>Browser notifications: {notificationStatus === 'granted' ? 'Enabled' : notificationStatus === 'denied' ? 'Blocked' : notificationStatus === 'unsupported' ? 'Unavailable' : 'Not enabled'}</span>
-                {notificationStatus !== 'granted' && notificationStatus !== 'unsupported' ? <button className="text-button" type="button" disabled={!session} onClick={() => void enableNotifications(setNotificationStatus, setNotificationMessage)}>Enable browser notifications</button> : null}
+                {notificationStatus !== 'granted' && notificationStatus !== 'unsupported' ? <button className="text-button" type="button" disabled={!session} onClick={() => void enableNotifications(storeId, session?.accessToken, setNotificationStatus, setNotificationMessage)}>Enable browser notifications</button> : null}
                 {notificationStatus === 'granted' ? <button className="text-button" type="button" onClick={() => void sendTestNotification(setNotificationMessage)}>Send test alert</button> : null}
                 {notificationMessage ? <span role="status">{notificationMessage}</span> : null}
               </div>
@@ -695,7 +695,7 @@ function getNotificationStatus(): NotificationStatus {
   return Notification.permission
 }
 
-async function enableNotifications(setStatus: (status: NotificationStatus) => void, setMessage: (message: string | null) => void) {
+async function enableNotifications(storeId: string, accessToken: string | undefined, setStatus: (status: NotificationStatus) => void, setMessage: (message: string | null) => void) {
   if (!('Notification' in window)) {
     setStatus('unsupported')
     setMessage('This browser does not support notifications.')
@@ -704,7 +704,48 @@ async function enableNotifications(setStatus: (status: NotificationStatus) => vo
 
   const permission = await Notification.requestPermission()
   setStatus(permission)
-  setMessage(permission === 'granted' ? 'Browser notifications enabled. Push provider registration is not configured yet.' : permission === 'denied' ? 'Browser notifications are blocked for this site.' : 'Notification permission was not granted.')
+  if (permission !== 'granted') {
+    setMessage(permission === 'denied' ? 'Browser notifications are blocked for this site.' : 'Notification permission was not granted.')
+    return
+  }
+
+  if (!accessToken) {
+    setMessage('Browser notifications enabled. Push provider registration is not configured yet.')
+    return
+  }
+
+  try {
+    const keyResponse = await fetch(`${apiBaseUrl.replace(/\/$/, '')}/api/v1/tenants/tenant-1/stores/${storeId}/push/public-key`, { headers: { Authorization: `Bearer ${accessToken}` } })
+    if (keyResponse.status === 404) {
+      setMessage('Browser notifications enabled. Push provider registration is not configured yet.')
+      return
+    }
+    if (!keyResponse.ok) throw new Error(`Push configuration API returned HTTP ${keyResponse.status}`)
+    const keyBody = await keyResponse.json() as { publicKey?: string }
+    if (!keyBody.publicKey) throw new Error('Push provider public key is missing')
+    const registration = await navigator.serviceWorker.ready
+    const subscription = await registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: urlBase64ToUint8Array(keyBody.publicKey) })
+    const response = await fetch(`${apiBaseUrl.replace(/\/$/, '')}/api/v1/tenants/tenant-1/stores/${storeId}/push-subscription`, {
+      method: 'PUT',
+      headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ endpoint: subscription.endpoint, p256dh: toBase64(subscription.getKey('p256dh')), auth: toBase64(subscription.getKey('auth')) }),
+    })
+    if (!response.ok) throw new Error(`Push subscription API returned HTTP ${response.status}`)
+    setMessage('Browser notifications enabled and registered for this store.')
+  } catch {
+    setMessage('Browser notifications are enabled, but push registration is unavailable in this browser session.')
+  }
+}
+
+function urlBase64ToUint8Array(value: string) {
+  const padding = '='.repeat((4 - (value.length % 4)) % 4)
+  const raw = atob((value + padding).replace(/-/g, '+').replace(/_/g, '/'))
+  return Uint8Array.from(raw, (character) => character.charCodeAt(0))
+}
+
+function toBase64(value: ArrayBuffer | null) {
+  if (!value) throw new Error('Push subscription key is missing')
+  return btoa(String.fromCharCode(...new Uint8Array(value)))
 }
 
 async function sendTestNotification(setMessage: (message: string | null) => void) {

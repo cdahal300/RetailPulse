@@ -43,6 +43,8 @@ Entra__TenantId=<tenant-id>
 Entra__Audience=api://<application-client-id>
 ```
 
+Provider-backed push registration additionally requires the cloud-only `Push__VapidPublicKey` setting. Keep the corresponding private key in Key Vault or an environment secret; it must never be sent to the browser.
+
 When those settings are present, the API validates issuer, audience, signature, expiry, tenant, store, and role claims before applying its existing authorization policy. Without them, the local header-based test harness remains available but should not be used as a production authentication path.
 
 ## Not responsible for

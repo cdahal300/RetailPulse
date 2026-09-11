@@ -40,7 +40,9 @@ var pushVapidPublicKey = builder.Configuration["Push:VapidPublicKey"];
 builder.Services.AddSingleton<IIdentityAuditEmitter>(_ => useSqliteCloudLedger || string.IsNullOrWhiteSpace(postgresConnectionString)
     ? new NoOpIdentityAuditEmitter()
     : new PostgresIdentityAuditEmitter(postgresConnectionString));
-builder.Services.AddSingleton<IIdentityLifecycleService, InMemoryIdentityLifecycleService>();
+builder.Services.AddSingleton<IIdentityLifecycleService>(_ => useSqliteCloudLedger || string.IsNullOrWhiteSpace(postgresConnectionString)
+    ? new InMemoryIdentityLifecycleService()
+    : new PostgresIdentityLifecycleService(postgresConnectionString));
 builder.Services.AddSingleton<IIdentityRevocationStore>(_ => useSqliteCloudLedger || string.IsNullOrWhiteSpace(postgresConnectionString)
     ? new InMemoryIdentityRevocationStore()
     : new PostgresIdentityRevocationStore(postgresConnectionString));

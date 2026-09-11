@@ -9,6 +9,7 @@
 - Offline command behavior: the PWA may persist only non-sensitive manager command payloads locally, retries with the current authenticated session after reconnect, and removes a command only after a confirmed or duplicate-safe server result; conflicts remain reviewable.
 - Notification behavior: production builds register the service worker, support browser permission state and notification deep links, and handle push payloads without storing notification secrets in the browser; provider subscription requires a configured VAPID/public-key contract.
 - Owner settings: `GET` and `PUT /api/v1/tenants/{tenantId}/stores/{storeId}/settings` are owner-only, tenant/store scoped, and use an expected version to reject stale updates.
+- Insights: `POST` and `GET /api/v1/tenants/{tenantId}/stores/{storeId}/insights` are manager/owner scoped and return advisory, schema-validated results with source, prompt, model, and validation metadata; the current provider is deterministic until Azure OpenAI is configured.
 - Authentication and authorization: configurable MSAL browser session for Entra ID plus server-side role/store/tenant policy; PWA never trusts route visibility for authorization. Synthetic manager headers are limited to explicit local `VITE_DEMO_MODE=true`.
 - Idempotency behavior: client command ID plus store/user scope deduplicates retries; response includes pending, accepted, confirmed, or reviewable status.
 - Error model: stable unauthenticated, forbidden, stale, validation, offline, transient, and reviewable states safe for user display.

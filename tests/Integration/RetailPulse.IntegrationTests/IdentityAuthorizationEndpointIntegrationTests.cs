@@ -305,6 +305,24 @@ public sealed class IdentityAuthorizationEndpointIntegrationTests : IClassFixtur
     }
 
     [Fact]
+    public async Task Cloud_insights_are_manager_scoped_and_advisory()
+    {
+        using var cashierRequest = CloudRequest("/api/v1/tenants/tenant-1/stores/store-1/insights", HttpMethod.Post, "cashier-insight-token", "cashier-1", "tenant-1", "store-1", "User", "Cashier", DateTimeOffset.UtcNow.AddMinutes(-5), DateTimeOffset.UtcNow.AddMinutes(30));
+        cashierRequest.Content = JsonContent.Create(new { InsightType = "sales-summary", RequestId = "cashier-insight-1", SourceVersion = "sales-report.v1" });
+        Assert.Equal(HttpStatusCode.Forbidden, (await cloudClient.SendAsync(cashierRequest)).StatusCode);
+
+        using var managerRequest = CloudRequest("/api/v1/tenants/tenant-1/stores/store-1/insights", HttpMethod.Post, "manager-insight-token", "manager-1", "tenant-1", "store-1", "User", "Manager", DateTimeOffset.UtcNow.AddMinutes(-5), DateTimeOffset.UtcNow.AddMinutes(30));
+        managerRequest.Content = JsonContent.Create(new { InsightType = "sales-summary", RequestId = "manager-insight-1", SourceVersion = "sales-report.v1" });
+        var manager = await cloudClient.SendAsync(managerRequest);
+        Assert.Equal(HttpStatusCode.OK, manager.StatusCode);
+        using var insight = JsonDocument.Parse(await manager.Content.ReadAsStringAsync());
+        Assert.Equal("Completed", insight.RootElement.GetProperty("status").GetString());
+        Assert.Equal("Validated", insight.RootElement.GetProperty("validationStatus").GetString());
+        Assert.Equal("deterministic-v1", insight.RootElement.GetProperty("promptVersion").GetString());
+        Assert.DoesNotContain("card", insight.RootElement.GetProperty("summary").GetString()!, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public async Task Cloud_role_change_revokes_existing_subject_session()
     {
         await using var factory = new TestCloudFactory();

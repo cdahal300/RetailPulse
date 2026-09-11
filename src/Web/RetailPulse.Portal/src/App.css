@@ -510,6 +510,22 @@ select {
 	accent-color: #2f654e;
 }
 
+.insight-content {
+	display: grid;
+	gap: 10px;
+}
+
+.insight-content p {
+	margin: 0;
+	color: #183d32;
+	line-height: 1.55;
+}
+
+.insight-content span {
+	color: #66776d;
+	font-size: 12px;
+}
+
 .check-list {
 	padding: 0;
 	list-style: none;

@@ -108,6 +108,18 @@ type StoreSettings = {
   version: number
 }
 
+type InsightResult = {
+  insightId: string
+  insightType: string
+  status: string
+  summary: string
+  sourceReferences: string[]
+  promptVersion: string
+  modelDeployment: string
+  validationStatus: string
+  generatedAt: string
+}
+
 const stores: StoreOption[] = [
   { id: 'store-1', name: 'Bardstown Road', market: 'Louisville' },
   { id: 'store-2', name: 'South End Market', market: 'Louisville' },
@@ -141,6 +153,8 @@ function App() {
   const [storeSettings, setStoreSettings] = useState<StoreSettings | null>(null)
   const [settingsError, setSettingsError] = useState<string | null>(null)
   const [settingsSaving, setSettingsSaving] = useState(false)
+  const [insight, setInsight] = useState<InsightResult | null>(null)
+  const [insightError, setInsightError] = useState<string | null>(null)
 
   useEffect(() => {
     if (demoMode || !entraConfigured) {
@@ -204,6 +218,23 @@ function App() {
       cancelled = true
     }
   }, [isOwner, session, storeId, refreshKey])
+
+  useEffect(() => {
+    let cancelled = false
+    setInsight(null)
+    setInsightError(null)
+    if (!session?.accessToken) return
+    void requestInsight(storeId, session.accessToken)
+      .then((result) => {
+        if (!cancelled) setInsight(result)
+      })
+      .catch((error: unknown) => {
+        if (!cancelled) setInsightError(error instanceof Error ? error.message : 'Insights are unavailable')
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [session, storeId, refreshKey])
 
   useEffect(() => {
     let cancelled = false
@@ -456,6 +487,17 @@ function App() {
               <button className="session-button" type="submit" disabled={settingsSaving}>{settingsSaving ? 'Saving...' : 'Save store settings'}</button>
             </form> : <p className="empty-state">Loading store settings...</p>}
           </article> : null}
+
+          <article className="panel" id="insights">
+            <div className="panel-heading">
+              <div>
+                <p className="eyebrow">Insights</p>
+                <h2>What to investigate</h2>
+              </div>
+              <LineChart size={20} />
+            </div>
+            {insightError ? <p className="inline-alert"><CloudOff size={16} />{insightError}</p> : insight ? <div className="insight-content"><p>{insight.summary}</p><span>{insight.validationStatus} · {insight.modelDeployment} · {insight.promptVersion}</span><span>Sources: {insight.sourceReferences.join(', ')}</span></div> : <p className="empty-state">Generating advisory insight...</p>}
+          </article>
         </section>
       </section>
     </main>
@@ -594,6 +636,16 @@ async function fetchStoreSettings(storeId: string, accessToken: string): Promise
   const response = await fetch(`${apiBaseUrl.replace(/\/$/, '')}/api/v1/tenants/tenant-1/stores/${storeId}/settings`, { headers: { Authorization: `Bearer ${accessToken}` } })
   if (!response.ok) throw new Error(`Store settings API returned HTTP ${response.status}`)
   return await response.json() as StoreSettings
+}
+
+async function requestInsight(storeId: string, accessToken: string): Promise<InsightResult> {
+  const response = await fetch(`${apiBaseUrl.replace(/\/$/, '')}/api/v1/tenants/tenant-1/stores/${storeId}/insights`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ insightType: 'sales-summary', requestId: crypto.randomUUID(), sourceVersion: 'sales-report.v1' }),
+  })
+  if (!response.ok) throw new Error(`Insights API returned HTTP ${response.status}`)
+  return await response.json() as InsightResult
 }
 
 async function saveStoreSettings(event: React.FormEvent<HTMLFormElement>, storeId: string, accessToken: string | undefined, current: StoreSettings, setSettings: (settings: StoreSettings) => void, setError: (error: string | null) => void, setSaving: (saving: boolean) => void) {

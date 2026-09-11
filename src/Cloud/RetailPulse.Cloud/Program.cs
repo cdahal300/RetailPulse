@@ -49,6 +49,7 @@ builder.Services.AddSingleton<IInventoryCommandService, InMemoryInventoryCommand
 builder.Services.AddSingleton<ISyncHealthReader>(_ => new PostgresSyncHealthReader(useSqliteCloudLedger ? null : postgresConnectionString));
 builder.Services.AddSingleton<IAlertsReader>(_ => new PostgresAlertsReader(useSqliteCloudLedger ? null : postgresConnectionString));
 builder.Services.AddSingleton<IStoreSettingsRepository>(_ => new PostgresStoreSettingsRepository(useSqliteCloudLedger ? null : postgresConnectionString));
+builder.Services.AddSingleton<IInsightsService, InMemoryInsightsService>();
 builder.Services.AddSingleton<IAnalyticsReportProvider, SimulatedAnalyticsReportProvider>();
 
 var app = builder.Build();
@@ -164,6 +165,35 @@ app.MapPut("/api/v1/tenants/{tenantId}/stores/{storeId}/settings",
         }
         var updated = await settings.UpdateAsync(new StoreSettings(tenantId, storeId, input.DisplayName.Trim(), input.TimeZone.Trim(), input.Currency.Trim().ToUpperInvariant(), input.InventoryAdjustmentsEnabled, input.ExpectedVersion), input.ExpectedVersion, request.HttpContext.RequestAborted);
         return updated is null ? Results.Conflict(new { Error = "Store settings changed since they were loaded." }) : Results.Ok(updated);
+    });
+
+app.MapPost("/api/v1/tenants/{tenantId}/stores/{storeId}/insights",
+    async (string tenantId, string storeId, HttpRequest request, IIdentityAuditEmitter auditEmitter, IIdentityRevocationStore revocations, IInsightsService insights) =>
+    {
+        var authorization = await AuthorizeAsync(request, new TenantStoreScope(tenantId, storeId), AuthorizationAction.ViewInsights, auditEmitter, revocations);
+        if (authorization.Result is not null) return authorization.Result;
+        var input = await request.ReadFromJsonAsync<InsightRequestBody>(request.HttpContext.RequestAborted);
+        if (input is null || string.IsNullOrWhiteSpace(input.InsightType) || string.IsNullOrWhiteSpace(input.RequestId) || string.IsNullOrWhiteSpace(input.SourceVersion))
+        {
+            return Results.BadRequest(new { Error = "InsightType, RequestId, and SourceVersion are required." });
+        }
+        try
+        {
+            return Results.Ok(await insights.RequestAsync(new InsightRequest(tenantId, storeId, input.InsightType, input.RequestId, input.SourceVersion), request.HttpContext.RequestAborted));
+        }
+        catch (ArgumentException ex)
+        {
+            return Results.BadRequest(new { Error = ex.Message });
+        }
+    });
+
+app.MapGet("/api/v1/tenants/{tenantId}/stores/{storeId}/insights/{insightId}",
+    async (string tenantId, string storeId, string insightId, HttpRequest request, IIdentityAuditEmitter auditEmitter, IIdentityRevocationStore revocations, IInsightsService insights) =>
+    {
+        var authorization = await AuthorizeAsync(request, new TenantStoreScope(tenantId, storeId), AuthorizationAction.ViewInsights, auditEmitter, revocations);
+        if (authorization.Result is not null) return authorization.Result;
+        var result = await insights.GetAsync(new TenantStoreScope(tenantId, storeId), insightId, request.HttpContext.RequestAborted);
+        return result is null ? Results.NotFound() : Results.Ok(result);
     });
 
 app.MapGet("/api/v1/tenants/{tenantId}/stores/{storeId}/notification-preferences",
@@ -744,3 +774,4 @@ static bool TryParseRoles(string rolesRaw, out IReadOnlyCollection<IdentityRole>
 record InventoryAdjustmentRequest(string ProductId, int QuantityDelta, string Reason, string CommandId, int ExpectedVersion);
 record NotificationPreferencesRequest(bool LowStockEnabled, bool SyncFailureEnabled);
 record StoreSettingsRequest(string DisplayName, string TimeZone, string Currency, bool InventoryAdjustmentsEnabled, int ExpectedVersion);
+record InsightRequestBody(string InsightType, string RequestId, string SourceVersion);

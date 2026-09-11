@@ -201,6 +201,43 @@ public sealed class IdentityAuthorizationEndpointIntegrationTests : IClassFixtur
     }
 
     [Fact]
+    public async Task Cloud_sync_health_requires_manager_scope()
+    {
+        var noToken = await cloudClient.GetAsync("/api/v1/tenants/tenant-1/stores/store-1/sync-health");
+        Assert.Equal(HttpStatusCode.Unauthorized, noToken.StatusCode);
+
+        using var cashierRequest = CloudRequest(
+            "/api/v1/tenants/tenant-1/stores/store-1/sync-health",
+            HttpMethod.Get,
+            "cashier-sync-token",
+            "cashier-1",
+            "tenant-1",
+            "store-1",
+            "User",
+            "Cashier",
+            DateTimeOffset.UtcNow.AddMinutes(-5),
+            DateTimeOffset.UtcNow.AddMinutes(30));
+        var cashier = await cloudClient.SendAsync(cashierRequest);
+        Assert.Equal(HttpStatusCode.Forbidden, cashier.StatusCode);
+
+        using var managerRequest = CloudRequest(
+            "/api/v1/tenants/tenant-1/stores/store-1/sync-health",
+            HttpMethod.Get,
+            "manager-sync-token",
+            "manager-1",
+            "tenant-1",
+            "store-1",
+            "User",
+            "Manager",
+            DateTimeOffset.UtcNow.AddMinutes(-5),
+            DateTimeOffset.UtcNow.AddMinutes(30));
+        var manager = await cloudClient.SendAsync(managerRequest);
+        Assert.Equal(HttpStatusCode.OK, manager.StatusCode);
+        using var document = JsonDocument.Parse(await manager.Content.ReadAsStringAsync());
+        Assert.Equal(0, document.RootElement.GetProperty("pendingCount").GetInt32());
+    }
+
+    [Fact]
     public async Task Cloud_role_change_revokes_existing_subject_session()
     {
         await using var factory = new TestCloudFactory();

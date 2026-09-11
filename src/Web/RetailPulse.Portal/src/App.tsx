@@ -65,6 +65,15 @@ type SalesReport = {
 
 type DashboardState = 'fresh' | 'cached' | 'offline' | 'loading'
 
+type SyncHealth = {
+  pendingCount: number
+  oldestPendingAt: string | null
+  lastSuccessAt: string | null
+  retryCount: number
+  conflictCount: number
+  deadLetterCount: number
+}
+
 const stores: StoreOption[] = [
   { id: 'store-1', name: 'Bardstown Road', market: 'Louisville' },
   { id: 'store-2', name: 'South End Market', market: 'Louisville' },
@@ -85,6 +94,8 @@ function App() {
   const [authError, setAuthError] = useState<string | null>(null)
   const [adjustmentStatus, setAdjustmentStatus] = useState<string | null>(null)
   const [adjustmentSubmitting, setAdjustmentSubmitting] = useState(false)
+  const [syncHealth, setSyncHealth] = useState<SyncHealth | null>(null)
+  const [syncHealthError, setSyncHealthError] = useState<string | null>(null)
 
   useEffect(() => {
     if (demoMode || !entraConfigured) {
@@ -125,6 +136,25 @@ function App() {
     }
 
     void loadReport()
+    return () => {
+      cancelled = true
+    }
+  }, [session, storeId, refreshKey])
+
+  useEffect(() => {
+    let cancelled = false
+    setSyncHealth(null)
+    setSyncHealthError(null)
+    if (!demoMode && entraConfigured && !session) return
+
+    void fetchSyncHealth(storeId, session?.accessToken)
+      .then((health) => {
+        if (!cancelled) setSyncHealth(health)
+      })
+      .catch((error: unknown) => {
+        if (!cancelled) setSyncHealthError(error instanceof Error ? error.message : 'Sync health is unavailable')
+      })
+
     return () => {
       cancelled = true
     }
@@ -291,9 +321,9 @@ function App() {
               <AlertTriangle size={20} />
             </div>
             <ul className="check-list">
-              <li><span />Analytics is using simulated facts until real ingestion lands.</li>
-              <li><span />Reports are tenant and store scoped on the server.</li>
-              <li><span />No payment card data is present in the report contract.</li>
+              <li><span className={syncHealth && syncHealth.pendingCount > 0 ? 'warning-dot' : ''} />{syncHealth ? syncHealth.pendingCount === 0 ? 'Sync queue is clear.' : `${syncHealth.pendingCount} item${syncHealth.pendingCount === 1 ? '' : 's'} pending synchronization.` : syncHealthError ?? 'Checking sync health...'}</li>
+              <li><span className={syncHealth && (syncHealth.retryCount > 0 || syncHealth.conflictCount > 0 || syncHealth.deadLetterCount > 0) ? 'warning-dot' : ''} />{syncHealth ? `${syncHealth.retryCount} retries · ${syncHealth.conflictCount} conflicts · ${syncHealth.deadLetterCount} dead letters.` : 'Tenant and store scope is enforced by the server.'}</li>
+              <li><span />Last successful sync: {syncHealth?.lastSuccessAt ? formatTime(syncHealth.lastSuccessAt) : 'No completed sync recorded.'}</li>
             </ul>
           </article>
         </section>
@@ -370,6 +400,27 @@ async function fetchSalesReport(storeId: string, accessToken?: string): Promise<
   }
 
   return await response.json() as SalesReport
+}
+
+async function fetchSyncHealth(storeId: string, accessToken?: string): Promise<SyncHealth> {
+  if (!apiBaseUrl || (!demoMode && !accessToken)) {
+    throw new Error('Live identity session is not configured')
+  }
+
+  const url = `${apiBaseUrl.replace(/\/$/, '')}/api/v1/tenants/tenant-1/stores/${storeId}/sync-health`
+  const headers: Record<string, string> = demoMode ? {
+    'X-RetailPulse-Token-Id': `portal-sync-${storeId}-${Date.now()}`,
+    'X-RetailPulse-Subject-Id': 'manager-portal',
+    'X-RetailPulse-Tenant-Id': 'tenant-1',
+    'X-RetailPulse-Store-Id': storeId,
+    'X-RetailPulse-Principal-Type': 'User',
+    'X-RetailPulse-Roles': 'Manager',
+    'X-RetailPulse-Issued-At': new Date().toISOString(),
+    'X-RetailPulse-Expires-At': new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+  } : { Authorization: `Bearer ${accessToken}` }
+  const response = await fetch(url, { headers })
+  if (!response.ok) throw new Error(`Sync health API returned HTTP ${response.status}`)
+  return await response.json() as SyncHealth
 }
 
 async function submitInventoryAdjustment(

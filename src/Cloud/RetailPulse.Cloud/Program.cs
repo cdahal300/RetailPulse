@@ -46,6 +46,7 @@ builder.Services.AddSingleton<IInventoryLedgerRepository>(_ => useSqliteCloudLed
 builder.Services.AddSingleton<ICatalogInventoryAuthorization, CloudInventoryAuthorization>();
 builder.Services.AddSingleton<CatalogInventoryService>();
 builder.Services.AddSingleton<IInventoryCommandService, InMemoryInventoryCommandService>();
+builder.Services.AddSingleton<ISyncHealthReader>(_ => new PostgresSyncHealthReader(useSqliteCloudLedger ? null : postgresConnectionString));
 builder.Services.AddSingleton<IAnalyticsReportProvider, SimulatedAnalyticsReportProvider>();
 
 var app = builder.Build();
@@ -119,6 +120,18 @@ app.MapGet("/api/v1/tenants/{tenantId}/stores/{storeId}/reports/sales",
         {
             return Results.BadRequest(new { Error = ex.Message });
         }
+    });
+
+app.MapGet("/api/v1/tenants/{tenantId}/stores/{storeId}/sync-health",
+    async (string tenantId, string storeId, HttpRequest request, IIdentityAuditEmitter auditEmitter, IIdentityRevocationStore revocations, ISyncHealthReader healthReader) =>
+    {
+        var authorization = await AuthorizeAsync(request, new TenantStoreScope(tenantId, storeId), AuthorizationAction.ViewSyncHealth, auditEmitter, revocations);
+        if (authorization.Result is not null)
+        {
+            return authorization.Result;
+        }
+
+        return Results.Ok(await healthReader.GetAsync(new TenantStoreScope(tenantId, storeId), request.HttpContext.RequestAborted));
     });
 
 app.MapPost("/api/v1/tenants/{tenantId}/stores/{storeId}/manager/inventory-adjustments",

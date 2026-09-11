@@ -2,7 +2,7 @@
 
 ## Status
 
-In progress. The first MVP slice turns the starter portal into a manager dashboard that reads FEAT-010 sales report contracts when an API base URL is configured and otherwise uses clearly labeled simulated, non-sensitive fallback data.
+In progress. The MVP slices now include an Entra-authenticated manager dashboard with live sales and tenant/store-scoped sync-health data, plus authorized inventory commands.
 
 ## Outcome
 

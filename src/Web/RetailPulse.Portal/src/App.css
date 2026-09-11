@@ -442,6 +442,10 @@ select {
 	background: #2f654e;
 }
 
+.check-list .warning-dot {
+	background: #c56a3d;
+}
+
 .auth-gate {
 	min-height: 100vh;
 	display: grid;

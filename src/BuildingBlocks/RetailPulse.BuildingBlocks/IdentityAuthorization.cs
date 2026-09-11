@@ -12,7 +12,8 @@ public enum AuthorizationAction
     ConfigureStore,
     RegisterDevice,
     RevokeDevice,
-    ManageRoles
+    ManageRoles,
+    ViewSyncHealth
 }
 
 public enum AuthorizationFailure
@@ -111,6 +112,7 @@ public static class IdentityAuthorizationPolicy
     {
         AuthorizationAction.ReadStoreData => [IdentityRole.Cashier, IdentityRole.Manager, IdentityRole.Device],
         AuthorizationAction.ViewReports => [IdentityRole.Manager],
+        AuthorizationAction.ViewSyncHealth => [IdentityRole.Manager],
         AuthorizationAction.ExecuteCheckout => [IdentityRole.Cashier, IdentityRole.Manager, IdentityRole.Device],
         AuthorizationAction.AdjustInventory => [IdentityRole.Manager],
         AuthorizationAction.ConfigureStore => [IdentityRole.Manager],

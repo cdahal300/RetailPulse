@@ -459,6 +459,30 @@ select {
 	accent-color: #2f654e;
 }
 
+.notification-actions {
+	display: grid;
+	gap: 8px;
+	margin-top: 4px;
+	padding-top: 10px;
+	border-top: 1px solid #dce5de;
+}
+
+.text-button {
+	justify-self: start;
+	padding: 0;
+	border: 0;
+	background: transparent;
+	color: #2f654e;
+	font: inherit;
+	font-weight: 700;
+	cursor: pointer;
+}
+
+.text-button:disabled {
+	color: #98a79d;
+	cursor: not-allowed;
+}
+
 .check-list {
 	padding: 0;
 	list-style: none;

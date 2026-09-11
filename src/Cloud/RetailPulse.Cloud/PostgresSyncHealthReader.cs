@@ -44,8 +44,11 @@ public sealed class PostgresSyncHealthReader(string? connectionString) : ISyncHe
 
     private static async Task EnsureSchemaAsync(NpgsqlConnection connection, CancellationToken cancellationToken)
     {
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
         await using var command = connection.CreateCommand();
-        command.CommandText = "CREATE TABLE IF NOT EXISTS sync_delivery_status (tenant_id TEXT NOT NULL, store_id TEXT NOT NULL, message_id TEXT NOT NULL, status TEXT NOT NULL, occurred_at TIMESTAMPTZ NOT NULL, last_attempt_at TIMESTAMPTZ NULL, PRIMARY KEY (tenant_id, store_id, message_id)); CREATE INDEX IF NOT EXISTS ix_sync_delivery_scope_status ON sync_delivery_status (tenant_id, store_id, status);";
+        command.Transaction = transaction;
+        command.CommandText = "SELECT pg_advisory_xact_lock(482901); CREATE TABLE IF NOT EXISTS sync_delivery_status (tenant_id TEXT NOT NULL, store_id TEXT NOT NULL, message_id TEXT NOT NULL, status TEXT NOT NULL, occurred_at TIMESTAMPTZ NOT NULL, last_attempt_at TIMESTAMPTZ NULL, PRIMARY KEY (tenant_id, store_id, message_id)); CREATE INDEX IF NOT EXISTS ix_sync_delivery_scope_status ON sync_delivery_status (tenant_id, store_id, status);";
         await command.ExecuteNonQueryAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
     }
 }

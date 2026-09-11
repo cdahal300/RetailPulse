@@ -7,6 +7,7 @@
 - Given an offline launch, when cached data exists, then the PWA shows clearly labeled stale read-only data and queues only explicitly supported commands.
 - Given an offline manager adjustment, when connectivity returns, then the command retries with its stable client ID and shows confirmed, duplicate, or reviewable status without storing an access token.
 - Given notification permission is denied, unavailable, or granted, then the PWA shows the corresponding state; granted notifications deep-link to the relevant alerts view when selected.
+- Given a manager or owner opens settings, then only an owner can view or update store configuration and stale updates remain reviewable without overwriting newer settings.
 
 ## Failure and resilience behavior
 

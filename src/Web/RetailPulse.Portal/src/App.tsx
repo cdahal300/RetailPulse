@@ -100,6 +100,14 @@ type NotificationPreferences = {
 
 type NotificationStatus = 'unsupported' | 'default' | 'denied' | 'granted'
 
+type StoreSettings = {
+  displayName: string
+  timeZone: string
+  currency: string
+  inventoryAdjustmentsEnabled: boolean
+  version: number
+}
+
 const stores: StoreOption[] = [
   { id: 'store-1', name: 'Bardstown Road', market: 'Louisville' },
   { id: 'store-2', name: 'South End Market', market: 'Louisville' },
@@ -130,6 +138,9 @@ function App() {
   const [preferencesSaving, setPreferencesSaving] = useState(false)
   const [notificationStatus, setNotificationStatus] = useState<NotificationStatus>(() => getNotificationStatus())
   const [notificationMessage, setNotificationMessage] = useState<string | null>(null)
+  const [storeSettings, setStoreSettings] = useState<StoreSettings | null>(null)
+  const [settingsError, setSettingsError] = useState<string | null>(null)
+  const [settingsSaving, setSettingsSaving] = useState(false)
 
   useEffect(() => {
     if (demoMode || !entraConfigured) {
@@ -174,6 +185,25 @@ function App() {
       cancelled = true
     }
   }, [session, storeId, refreshKey])
+
+  const isOwner = session?.roles.some((role) => role.toLowerCase() === 'owner') ?? false
+
+  useEffect(() => {
+    let cancelled = false
+    setStoreSettings(null)
+    setSettingsError(null)
+    if (!isOwner || !session?.accessToken) return
+    void fetchStoreSettings(storeId, session.accessToken)
+      .then((settings) => {
+        if (!cancelled) setStoreSettings(settings)
+      })
+      .catch((error: unknown) => {
+        if (!cancelled) setSettingsError(error instanceof Error ? error.message : 'Store settings are unavailable')
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [isOwner, session, storeId, refreshKey])
 
   useEffect(() => {
     let cancelled = false
@@ -409,6 +439,23 @@ function App() {
               </div>
             </div>
           </article>
+
+          {isOwner ? <article className="panel" id="settings">
+            <div className="panel-heading">
+              <div>
+                <p className="eyebrow">Owner settings</p>
+                <h2>Store configuration</h2>
+              </div>
+              <ShieldCheck size={20} />
+            </div>
+            {settingsError ? <p className="inline-alert"><CloudOff size={16} />{settingsError}</p> : storeSettings ? <form className="settings-form" onSubmit={(event) => void saveStoreSettings(event, storeId, session?.accessToken, storeSettings, setStoreSettings, setSettingsError, setSettingsSaving)}>
+              <label>Display name<input name="displayName" defaultValue={storeSettings.displayName} required /></label>
+              <label>Time zone<input name="timeZone" defaultValue={storeSettings.timeZone} required /></label>
+              <label>Currency<input name="currency" defaultValue={storeSettings.currency} maxLength={3} required /></label>
+              <label><input name="inventoryAdjustmentsEnabled" type="checkbox" defaultChecked={storeSettings.inventoryAdjustmentsEnabled} /> Manager inventory adjustments enabled</label>
+              <button className="session-button" type="submit" disabled={settingsSaving}>{settingsSaving ? 'Saving...' : 'Save store settings'}</button>
+            </form> : <p className="empty-state">Loading store settings...</p>}
+          </article> : null}
         </section>
       </section>
     </main>
@@ -538,6 +585,40 @@ async function saveNotificationPreferences(storeId: string, accessToken: string 
     const response = await fetch(`${apiBaseUrl.replace(/\/$/, '')}/api/v1/tenants/tenant-1/stores/${storeId}/notification-preferences`, { method: 'PUT', headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' }, body: JSON.stringify(preferences) })
     if (!response.ok) throw new Error(`Notification preferences API returned HTTP ${response.status}`)
     setPreferences(preferences)
+  } finally {
+    setSaving(false)
+  }
+}
+
+async function fetchStoreSettings(storeId: string, accessToken: string): Promise<StoreSettings> {
+  const response = await fetch(`${apiBaseUrl.replace(/\/$/, '')}/api/v1/tenants/tenant-1/stores/${storeId}/settings`, { headers: { Authorization: `Bearer ${accessToken}` } })
+  if (!response.ok) throw new Error(`Store settings API returned HTTP ${response.status}`)
+  return await response.json() as StoreSettings
+}
+
+async function saveStoreSettings(event: React.FormEvent<HTMLFormElement>, storeId: string, accessToken: string | undefined, current: StoreSettings, setSettings: (settings: StoreSettings) => void, setError: (error: string | null) => void, setSaving: (saving: boolean) => void) {
+  event.preventDefault()
+  if (!accessToken) return
+  const form = new FormData(event.currentTarget)
+  setSaving(true)
+  setError(null)
+  try {
+    const response = await fetch(`${apiBaseUrl.replace(/\/$/, '')}/api/v1/tenants/tenant-1/stores/${storeId}/settings`, {
+      method: 'PUT',
+      headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        displayName: form.get('displayName'),
+        timeZone: form.get('timeZone'),
+        currency: form.get('currency'),
+        inventoryAdjustmentsEnabled: form.get('inventoryAdjustmentsEnabled') === 'on',
+        expectedVersion: current.version,
+      }),
+    })
+    const body = await response.json().catch(() => ({})) as StoreSettings & { error?: string }
+    if (!response.ok) throw new Error(body.error ?? `Store settings API returned HTTP ${response.status}`)
+    setSettings(body)
+  } catch (error) {
+    setError(error instanceof Error ? error.message : 'Store settings could not be saved')
   } finally {
     setSaving(false)
   }

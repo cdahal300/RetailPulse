@@ -272,6 +272,39 @@ public sealed class IdentityAuthorizationEndpointIntegrationTests : IClassFixtur
     }
 
     [Fact]
+    public async Task Cloud_store_settings_are_owner_only_and_versioned()
+    {
+        using var managerRequest = CloudRequest(
+            "/api/v1/tenants/tenant-1/stores/store-1/settings",
+            HttpMethod.Get,
+            "manager-settings-token",
+            "manager-1",
+            "tenant-1",
+            "store-1",
+            "User",
+            "Manager",
+            DateTimeOffset.UtcNow.AddMinutes(-5),
+            DateTimeOffset.UtcNow.AddMinutes(30));
+        Assert.Equal(HttpStatusCode.Forbidden, (await cloudClient.SendAsync(managerRequest)).StatusCode);
+
+        using var ownerRequest = CloudRequest(
+            "/api/v1/tenants/tenant-1/stores/store-1/settings",
+            HttpMethod.Get,
+            "owner-settings-token",
+            "owner-1",
+            "tenant-1",
+            null,
+            "User",
+            "Owner",
+            DateTimeOffset.UtcNow.AddMinutes(-5),
+            DateTimeOffset.UtcNow.AddMinutes(30));
+        var owner = await cloudClient.SendAsync(ownerRequest);
+        Assert.Equal(HttpStatusCode.OK, owner.StatusCode);
+        using var settings = JsonDocument.Parse(await owner.Content.ReadAsStringAsync());
+        Assert.Equal(0, settings.RootElement.GetProperty("version").GetInt32());
+    }
+
+    [Fact]
     public async Task Cloud_role_change_revokes_existing_subject_session()
     {
         await using var factory = new TestCloudFactory();

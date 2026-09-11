@@ -117,7 +117,7 @@ public static class IdentityAuthorizationPolicy
         AuthorizationAction.ManageNotificationPreferences => [IdentityRole.Manager],
         AuthorizationAction.ExecuteCheckout => [IdentityRole.Cashier, IdentityRole.Manager, IdentityRole.Device],
         AuthorizationAction.AdjustInventory => [IdentityRole.Manager],
-        AuthorizationAction.ConfigureStore => [IdentityRole.Manager],
+        AuthorizationAction.ConfigureStore => [IdentityRole.Owner],
         AuthorizationAction.RegisterDevice => [IdentityRole.Owner],
         AuthorizationAction.RevokeDevice => [IdentityRole.Owner],
         AuthorizationAction.ManageRoles => [IdentityRole.Owner],

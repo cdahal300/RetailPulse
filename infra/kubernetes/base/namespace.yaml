@@ -21,6 +21,8 @@ data:
   Portal__AllowedOrigins: ""
   Analytics__UseEventFacts: "false"
   AzureKeyVault__VaultUri: ""
+  Payment__Provider: Sandbox
+  Payment__Stripe__PaymentMethodId: pm_card_visa
   ServiceBus__FullyQualifiedNamespace: ""
   Push__VapidPublicKey: ""
 ---

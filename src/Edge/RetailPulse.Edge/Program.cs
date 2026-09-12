@@ -1,15 +1,31 @@
 using RetailPulse.BuildingBlocks;
 using RetailPulse.Edge;
+using Azure.Identity;
 
 var builder = WebApplication.CreateBuilder(args);
+var keyVaultUri = builder.Configuration["AzureKeyVault:VaultUri"];
+if (Uri.TryCreate(keyVaultUri, UriKind.Absolute, out var keyVaultEndpoint))
+{
+	builder.Configuration.AddAzureKeyVault(keyVaultEndpoint, new DefaultAzureCredential());
+}
 var databasePath = builder.Configuration["RetailPulse:EdgeDatabasePath"] ?? Path.Combine(AppContext.BaseDirectory, "retailpulse-edge.db");
 var sqliteCheckoutPersistence = new SqliteCheckoutPersistence(databasePath);
+var paymentProvider = builder.Configuration["Payment:Provider"] ?? "Sandbox";
 builder.Services.AddSingleton<ILocalCheckoutPersistence>(sqliteCheckoutPersistence);
 builder.Services.AddSingleton<IOutboxPersistence>(sqliteCheckoutPersistence);
 builder.Services.AddSingleton(sqliteCheckoutPersistence);
 builder.Services.AddSingleton(_ => new BoundedAuthorizationSessionCache(TimeSpan.FromMinutes(15)));
 builder.Services.AddSingleton<IIdentityAuditEmitter, NoOpIdentityAuditEmitter>();
 builder.Services.AddSingleton<IIdentityRevocationStore, InMemoryIdentityRevocationStore>();
+builder.Services.AddHttpClient();
+builder.Services.AddSingleton<IPaymentProvider>(services =>
+	paymentProvider.Equals("Stripe", StringComparison.OrdinalIgnoreCase)
+		? new PaymentProviderAdapter(
+			new StripePaymentGateway(
+				services.GetRequiredService<IHttpClientFactory>().CreateClient(),
+				builder.Configuration["Payment:Stripe:ApiKey"] ?? string.Empty,
+				builder.Configuration["Payment:Stripe:PaymentMethodId"] ?? "pm_card_visa"))
+		: new PaymentProviderAdapter(new SandboxPaymentGateway()));
 var app = builder.Build();
 
 app.MapGet("/", () => "RetailPulse Edge");

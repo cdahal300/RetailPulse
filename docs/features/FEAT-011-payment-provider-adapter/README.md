@@ -15,6 +15,8 @@ Adapter boundary and sandbox mapping implemented; provider certification, hardwa
 - Duplicate idempotency keys do not invoke the gateway twice.
 - Approved responses require an opaque provider reference.
 - No PAN, CVV, PIN, magnetic-stripe, or raw card fields are present in the adapter contract.
+- Edge runtime defaults to the local sandbox gateway and can select Stripe test mode through `Payment__Provider=Stripe`.
+- Stripe test credentials resolve from Key Vault secret `Payment--Stripe--ApiKey`.
 
 ## Scope
 

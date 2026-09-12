@@ -1,4 +1,6 @@
 using RetailPulse.BuildingBlocks;
+using System.Net.Http.Headers;
+using System.Text.Json;
 
 namespace RetailPulse.Edge;
 
@@ -77,5 +79,64 @@ public sealed class SandboxPaymentGateway : IExternalPaymentGateway
             localTransactionId.Contains("pending", StringComparison.OrdinalIgnoreCase) ? "pending" :
             localTransactionId.Contains("timeout", StringComparison.OrdinalIgnoreCase) ? "timeout" : "approved";
         return Task.FromResult(new ExternalPaymentAuthorization(status, status == "approved" ? $"sandbox-{idempotencyKey}" : null, status == "approved" ? "sandbox-auth" : null));
+    }
+}
+
+public sealed class StripePaymentGateway(HttpClient httpClient, string apiKey, string paymentMethodId = "pm_card_visa") : IExternalPaymentGateway
+{
+    public async Task<ExternalPaymentAuthorization> AuthorizeAsync(Money amount, string currency, string storeId, string terminalId, string localTransactionId, string correlationId, string idempotencyKey, CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(apiKey)) throw new InvalidOperationException("Stripe API key is not configured.");
+        if (string.IsNullOrWhiteSpace(paymentMethodId)) throw new InvalidOperationException("Stripe test payment method is not configured.");
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, "https://api.stripe.com/v1/payment_intents");
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
+        request.Headers.Add("Idempotency-Key", idempotencyKey);
+        request.Content = new FormUrlEncodedContent(new Dictionary<string, string>
+        {
+            ["amount"] = amount.MinorUnits.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            ["currency"] = currency.ToLowerInvariant(),
+            ["payment_method"] = paymentMethodId,
+            ["confirm"] = "true",
+            ["metadata[store_id]"] = storeId,
+            ["metadata[terminal_id]"] = terminalId,
+            ["metadata[local_transaction_id]"] = localTransactionId,
+            ["metadata[correlation_id]"] = correlationId
+        });
+
+        using var response = await httpClient.SendAsync(request, cancellationToken);
+        var body = await response.Content.ReadAsStringAsync(cancellationToken);
+        if (!response.IsSuccessStatusCode)
+        {
+            return new ExternalPaymentAuthorization(MapStripeError(body));
+        }
+
+        using var document = JsonDocument.Parse(body);
+        var root = document.RootElement;
+        var status = root.TryGetProperty("status", out var statusValue) ? statusValue.GetString() : null;
+        var paymentIntentId = root.TryGetProperty("id", out var idValue) ? idValue.GetString() : null;
+        return new ExternalPaymentAuthorization(MapStripeStatus(status), paymentIntentId);
+    }
+
+    private static string MapStripeStatus(string? status) => status switch
+    {
+        "succeeded" => "approved",
+        "requires_action" or "requires_confirmation" or "processing" => "pending",
+        "canceled" => "cancelled",
+        _ => "pending"
+    };
+
+    private static string MapStripeError(string body)
+    {
+        try
+        {
+            using var document = JsonDocument.Parse(body);
+            var code = document.RootElement.GetProperty("error").TryGetProperty("code", out var value) ? value.GetString() : null;
+            return code is "card_declined" or "insufficient_funds" ? "declined" : "pending";
+        }
+        catch (JsonException)
+        {
+            return "pending";
+        }
     }
 }

@@ -4,6 +4,8 @@
     <ProjectReference Include="..\..\BuildingBlocks\RetailPulse.BuildingBlocks\RetailPulse.BuildingBlocks.csproj" />
     <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.0" />
     <PackageReference Include="SQLitePCLRaw.lib.e_sqlite3" Version="3.53.3" />
+    <PackageReference Include="Azure.Identity" Version="1.17.1" />
+    <PackageReference Include="Azure.Extensions.AspNetCore.Configuration.Secrets" Version="1.4.0" />
   </ItemGroup>
 
   <PropertyGroup>

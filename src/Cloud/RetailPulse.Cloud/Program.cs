@@ -175,6 +175,36 @@ app.MapGet("/api/v1/tenants/{tenantId}/stores/{storeId}/sync-health",
         return Results.Ok(await healthReader.GetAsync(new TenantStoreScope(tenantId, storeId), request.HttpContext.RequestAborted));
     });
 
+app.MapPost("/api/v1/dev/analytics/seed-sale",
+    async (HttpRequest request, IIdentityAuditEmitter auditEmitter, IIdentityRevocationStore revocations, AnalyticsEventIngestor ingestor) =>
+    {
+        if (!app.Environment.IsDevelopment()) return Results.NotFound();
+        var input = await request.ReadFromJsonAsync<AnalyticsSeedSaleRequest>(request.HttpContext.RequestAborted);
+        if (input is null || string.IsNullOrWhiteSpace(input.TenantId) || string.IsNullOrWhiteSpace(input.StoreId) || string.IsNullOrWhiteSpace(input.EventId))
+        {
+            return Results.BadRequest(new { Error = "TenantId, StoreId, and EventId are required." });
+        }
+
+        var authorization = await AuthorizeAsync(request, new TenantStoreScope(input.TenantId, input.StoreId), AuthorizationAction.ViewReports, auditEmitter, revocations);
+        if (authorization.Result is not null) return authorization.Result;
+        var accepted = await ingestor.IngestAsync(new SaleCompletedEvent(
+            input.EventId,
+            input.SaleId,
+            input.TenantId,
+            input.StoreId,
+            input.OccurredAt ?? DateTimeOffset.UtcNow,
+            1,
+            input.CorrelationId ?? input.EventId,
+            "dev-seed",
+            input.SaleId,
+            input.SaleId,
+            input.Currency,
+            input.TotalMinor,
+            "dev-seed-reference",
+            input.InventoryMovements.Select(movement => new InventoryMovement(movement.ProductId, movement.QuantityDelta)).ToArray()), request.HttpContext.RequestAborted);
+        return Results.Accepted(value: new { input.EventId, accepted, source = "dev-seed" });
+    });
+
 app.MapGet("/api/v1/tenants/{tenantId}/stores/{storeId}/alerts",
     async (string tenantId, string storeId, HttpRequest request, IIdentityAuditEmitter auditEmitter, IIdentityRevocationStore revocations, IAlertsReader alerts) =>
     {
@@ -842,6 +872,8 @@ static bool TryParseRoles(string rolesRaw, out IReadOnlyCollection<IdentityRole>
 
 record InventoryAdjustmentRequest(string ProductId, int QuantityDelta, string Reason, string CommandId, int ExpectedVersion);
 record NotificationPreferencesRequest(bool LowStockEnabled, bool SyncFailureEnabled);
+record AnalyticsSeedSaleRequest(string TenantId, string StoreId, string EventId, string SaleId, string Currency, long TotalMinor, DateTimeOffset? OccurredAt, string? CorrelationId, IReadOnlyList<AnalyticsSeedMovement> InventoryMovements);
+record AnalyticsSeedMovement(string ProductId, int QuantityDelta);
 record StoreSettingsRequest(string DisplayName, string TimeZone, string Currency, bool InventoryAdjustmentsEnabled, int ExpectedVersion);
 record InsightRequestBody(string InsightType, string RequestId, string SourceVersion);
 record PushSubscriptionRequest(string Endpoint, string P256dh, string Auth);

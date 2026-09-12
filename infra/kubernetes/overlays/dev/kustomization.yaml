@@ -42,6 +42,9 @@ patches:
         path: /data/ASPNETCORE_URLS
         value: http://+:5000
       - op: replace
+        path: /data/Analytics__UseEventFacts
+        value: "true"
+      - op: replace
         path: /data/Entra__TenantId
         value: 84461914-7d3c-452f-bcff-cab760563700
       - op: replace

@@ -78,11 +78,11 @@ spec:
             configMapKeyRef:
               name: retailpulse-config
               key: Portal__AllowedOrigins
-          - name: Analytics__UseEventFacts
-            valueFrom:
-              configMapKeyRef:
-                name: retailpulse-config
-                key: Analytics__UseEventFacts
+        - name: Analytics__UseEventFacts
+          valueFrom:
+            configMapKeyRef:
+              name: retailpulse-config
+              key: Analytics__UseEventFacts
         - name: AzureKeyVault__VaultUri
           valueFrom:
             configMapKeyRef:

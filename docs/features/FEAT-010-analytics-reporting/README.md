@@ -30,7 +30,7 @@ As an owner or manager, I want trustworthy sales and inventory reports so that I
 - PostgreSQL migration v4 creates the facts table, scope index, and tenant/store RLS policy.
 - Dev `Analytics__UseEventFacts=true` selects the event-backed provider.
 - Authenticated development seed requests produced `event-facts` reports with complete freshness metadata in the PWA.
-- Production ADLS/stream ingestion, late-event correction, and replay are still pending.
+- Production ADLS/stream ingestion and operator-facing replay authorization remain pending; deterministic fact correction is implemented and tested.
 
 ## Acceptance criteria
 

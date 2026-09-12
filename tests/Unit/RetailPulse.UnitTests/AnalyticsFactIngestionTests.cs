@@ -52,6 +52,24 @@ public class AnalyticsFactIngestionTests
         Assert.Single(report.HourlySales);
     }
 
+    [Fact]
+    public async Task Corrections_replace_a_fact_without_breaking_duplicate_delivery_safety()
+    {
+        var store = new InMemoryAnalyticsFactStore();
+        var ingestor = new AnalyticsEventIngestor(store);
+        var original = CreateSaleEvent("event-correction", "tenant-1", "store-1");
+        Assert.True(await ingestor.IngestAsync(original));
+        Assert.False(await ingestor.IngestAsync(original));
+
+        var correction = original with { TotalMinor = 3100, InventoryMovements = [new InventoryMovement("coffee", -1)] };
+        Assert.True(await ingestor.CorrectAsync(correction));
+
+        var report = await new EventAnalyticsReportProvider(store).GetSalesReportAsync(new AnalyticsReportRequest(
+            "tenant-1", "store-1", DateTimeOffset.Parse("2026-08-23T00:00:00Z"), DateTimeOffset.Parse("2026-08-24T00:00:00Z"), "UTC", "USD"));
+        Assert.Equal(3100, report.Summary.NetSalesMinor);
+        Assert.Equal(1, report.Summary.UnitsSold);
+    }
+
     private static SaleCompletedEvent CreateSaleEvent(string eventId, string tenantId, string storeId) => new(
         eventId,
         "sale-aggregate",

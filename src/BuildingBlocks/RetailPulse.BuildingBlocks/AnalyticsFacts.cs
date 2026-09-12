@@ -15,6 +15,7 @@ public sealed record AnalyticsSalesFact(
 public interface IAnalyticsFactStore
 {
     Task<bool> AddAsync(AnalyticsSalesFact fact, CancellationToken cancellationToken = default);
+    Task<bool> CorrectAsync(AnalyticsSalesFact fact, CancellationToken cancellationToken = default);
     Task<IReadOnlyList<AnalyticsSalesFact>> GetSalesFactsAsync(AnalyticsReportRequest request, CancellationToken cancellationToken = default);
 }
 
@@ -28,6 +29,14 @@ public sealed class InMemoryAnalyticsFactStore : IAnalyticsFactStore
         if (facts.ContainsKey(fact.SourceEventId)) return Task.FromResult(false);
         facts.Add(fact.SourceEventId, fact);
         return Task.FromResult(true);
+    }
+
+    public Task<bool> CorrectAsync(AnalyticsSalesFact fact, CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        var existed = facts.ContainsKey(fact.SourceEventId);
+        facts[fact.SourceEventId] = fact;
+        return Task.FromResult(existed);
     }
 
     public Task<IReadOnlyList<AnalyticsSalesFact>> GetSalesFactsAsync(AnalyticsReportRequest request, CancellationToken cancellationToken = default)
@@ -64,6 +73,23 @@ public sealed class AnalyticsEventIngestor(IAnalyticsFactStore store)
             sourceEvent.TotalMinor,
             unitsSold,
             sourceEvent.OccurredAt), cancellationToken);
+    }
+
+    public async Task<bool> CorrectAsync(SaleCompletedEvent sourceEvent, CancellationToken cancellationToken = default)
+    {
+        if (sourceEvent.SchemaVersion != 1) throw new ArgumentException("Unsupported sale event schema version.", nameof(sourceEvent));
+        var unitsSold = Math.Max(0, -sourceEvent.InventoryMovements.Sum(movement => movement.QuantityDelta));
+        return await store.CorrectAsync(new AnalyticsSalesFact(
+            sourceEvent.EventId,
+            sourceEvent.AggregateId,
+            sourceEvent.TenantId,
+            sourceEvent.StoreId,
+            sourceEvent.SaleId,
+            sourceEvent.Currency,
+            sourceEvent.TotalMinor,
+            unitsSold,
+            sourceEvent.OccurredAt,
+            ProcessingVersion: 2), cancellationToken);
     }
 }
 

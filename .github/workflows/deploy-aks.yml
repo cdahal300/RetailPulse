@@ -319,6 +319,14 @@ jobs:
         if: failure()
         shell: bash
         run: |
+          echo 'Cloud API pod diagnostics:'
+          kubectl get pods -n retailpulse -l app=cloud-api -o wide || true
+          kubectl describe pods -n retailpulse -l app=cloud-api || true
+          kubectl logs -n retailpulse -l app=cloud-api --all-containers=true --tail=200 || true
+          echo 'Edge API pod diagnostics:'
+          kubectl get pods -n retailpulse -l app=edge-api -o wide || true
+          kubectl describe pods -n retailpulse -l app=edge-api || true
+          kubectl logs -n retailpulse -l app=edge-api --all-containers=true --tail=200 || true
           cat <<'ROLLBACK'
           Deployment failed. Stop promotion and redeploy the previous known-good image digest, for example:
             kubectl set image deployment/cloud-api cloud-api=<previous-cloud-image-digest> -n retailpulse

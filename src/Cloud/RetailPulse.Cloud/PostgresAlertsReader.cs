@@ -12,6 +12,7 @@ public sealed class PostgresAlertsReader(string? connectionString) : IAlertsRead
         scope.Validate();
         if (string.IsNullOrWhiteSpace(connectionString)) return [];
         await using var connection = await OpenConnectionAsync(cancellationToken);
+        await PostgresScope.SetAsync(connection, null, scope.TenantId, scope.StoreId, cancellationToken);
         await using var command = connection.CreateCommand();
         command.CommandText = "SELECT 'low-stock:' || b.product_id, b.tenant_id, b.store_id, 'Warning', 'LowStock', 'Low stock: ' || b.product_id, 'Available quantity is ' || b.quantity || ' and the threshold is ' || t.minimum_quantity || '.', CURRENT_TIMESTAMP FROM inventory_balances b JOIN inventory_thresholds t ON t.tenant_id = b.tenant_id AND t.store_id = b.store_id AND t.product_id = b.product_id WHERE b.tenant_id = @tenant AND b.store_id = @store AND b.quantity <= t.minimum_quantity UNION ALL SELECT 'sync:' || message_id, tenant_id, store_id, 'Critical', 'SyncFailure', 'Synchronization requires attention', 'Delivery status is ' || status || '.', COALESCE(last_attempt_at, occurred_at) FROM sync_delivery_status WHERE tenant_id = @tenant AND store_id = @store AND status IN ('Retry', 'Review', 'DeadLetter') ORDER BY 7 DESC;";
         command.Parameters.AddWithValue("tenant", scope.TenantId);
@@ -30,6 +31,7 @@ public sealed class PostgresAlertsReader(string? connectionString) : IAlertsRead
         scope.Validate();
         if (string.IsNullOrWhiteSpace(connectionString)) return DefaultPreferences(scope, subjectId);
         await using var connection = await OpenConnectionAsync(cancellationToken);
+        await PostgresScope.SetAsync(connection, null, scope.TenantId, scope.StoreId, cancellationToken);
         await using var command = connection.CreateCommand();
         command.CommandText = "SELECT low_stock_enabled, sync_failure_enabled, updated_at FROM notification_preferences WHERE tenant_id = @tenant AND store_id = @store AND subject_id = @subject;";
         command.Parameters.AddWithValue("tenant", scope.TenantId);
@@ -45,6 +47,7 @@ public sealed class PostgresAlertsReader(string? connectionString) : IAlertsRead
     {
         if (string.IsNullOrWhiteSpace(connectionString)) return preferences;
         await using var connection = await OpenConnectionAsync(cancellationToken);
+        await PostgresScope.SetAsync(connection, null, preferences.TenantId, preferences.StoreId, cancellationToken);
         await using var command = connection.CreateCommand();
         command.CommandText = "INSERT INTO notification_preferences (tenant_id, store_id, subject_id, low_stock_enabled, sync_failure_enabled, updated_at) VALUES (@tenant, @store, @subject, @low, @sync, @updated) ON CONFLICT (tenant_id, store_id, subject_id) DO UPDATE SET low_stock_enabled = EXCLUDED.low_stock_enabled, sync_failure_enabled = EXCLUDED.sync_failure_enabled, updated_at = EXCLUDED.updated_at;";
         command.Parameters.AddWithValue("tenant", preferences.TenantId);

@@ -17,6 +17,7 @@ public sealed class PostgresIdentityAuditEmitter(string? connectionString) : IId
     {
         if (string.IsNullOrWhiteSpace(connectionString)) return;
         await using var connection = await OpenConnectionAsync(connectionString, cancellationToken);
+        await PostgresScope.SetAsync(connection, null, auditEvent.TenantId, auditEvent.StoreId, cancellationToken);
         await using var command = connection.CreateCommand();
         command.CommandText = "INSERT INTO identity_audit_events (event_id, aggregate_id, tenant_id, store_id, occurred_at, correlation_id, subject_id, action, outcome, failure, schema_version) VALUES (@event, @aggregate, @tenant, @store, @occurred, @correlation, @subject, @action, @outcome, @failure, @version) ON CONFLICT (event_id) DO NOTHING;";
         command.Parameters.AddWithValue("event", auditEvent.EventId);

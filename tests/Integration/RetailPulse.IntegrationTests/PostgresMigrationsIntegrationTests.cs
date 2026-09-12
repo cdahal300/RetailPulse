@@ -27,10 +27,12 @@ public sealed class PostgresMigrationsIntegrationTests
             await using var connection = new NpgsqlConnection(connectionString);
             await connection.OpenAsync();
             await using var command = connection.CreateCommand();
-            command.CommandText = "SELECT version FROM schema_migrations;";
-            Assert.Equal(1, Convert.ToInt32(await command.ExecuteScalarAsync()));
+            command.CommandText = "SELECT MAX(version) FROM schema_migrations;";
+            Assert.Equal(PostgresMigrations.CurrentVersion, Convert.ToInt32(await command.ExecuteScalarAsync()));
             command.CommandText = "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'public' AND table_name IN ('inventory_movements', 'sync_delivery_status', 'identity_audit_events', 'identity_devices', 'push_subscriptions', 'store_settings');";
             Assert.Equal(6L, await command.ExecuteScalarAsync());
+            command.CommandText = "SELECT COUNT(*) FROM pg_policies WHERE schemaname = 'public' AND policyname = 'tenant_store_scope';";
+            Assert.Equal(11L, await command.ExecuteScalarAsync());
         }
         finally
         {

@@ -87,6 +87,7 @@ public sealed class PostgresIdentityLifecycleService(string? connectionString) :
         if (string.IsNullOrWhiteSpace(connectionString)) return new(IdentityCommandOutcome.NotFound);
         await using var connection = await OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        await PostgresScope.SetAsync(connection, transaction, command.TenantId, command.StoreId, cancellationToken);
         var existing = await ReadRoleCommandAsync(connection, transaction, command.CommandId, cancellationToken);
         if (existing is not null)
         {

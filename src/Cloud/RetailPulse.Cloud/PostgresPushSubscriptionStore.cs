@@ -27,6 +27,7 @@ public sealed class PostgresPushSubscriptionStore(string? connectionString) : IP
     {
         if (string.IsNullOrWhiteSpace(connectionString)) return;
         await using var connection = await OpenConnectionAsync(cancellationToken);
+        await PostgresScope.SetAsync(connection, null, scope.TenantId, scope.StoreId, cancellationToken);
         await using var command = connection.CreateCommand();
         command.CommandText = "DELETE FROM push_subscriptions WHERE tenant_id = @tenant AND store_id = @store AND subject_id = @subject AND endpoint = @endpoint;";
         command.Parameters.AddWithValue("tenant", scope.TenantId);
@@ -34,6 +35,25 @@ public sealed class PostgresPushSubscriptionStore(string? connectionString) : IP
         command.Parameters.AddWithValue("subject", subjectId);
         command.Parameters.AddWithValue("endpoint", endpoint);
         await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    public async Task<IReadOnlyList<PushSubscription>> ListAsync(TenantStoreScope scope, CancellationToken cancellationToken = default)
+    {
+        scope.Validate();
+        if (string.IsNullOrWhiteSpace(connectionString)) return [];
+        await using var connection = await OpenConnectionAsync(cancellationToken);
+        await PostgresScope.SetAsync(connection, null, scope.TenantId, scope.StoreId, cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = "SELECT tenant_id, store_id, subject_id, endpoint, p256dh, auth, updated_at FROM push_subscriptions WHERE tenant_id = @tenant AND store_id = @store;";
+        command.Parameters.AddWithValue("tenant", scope.TenantId);
+        command.Parameters.AddWithValue("store", scope.StoreId);
+        var subscriptions = new List<PushSubscription>();
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            subscriptions.Add(new(reader.GetString(0), reader.GetString(1), reader.GetString(2), reader.GetString(3), reader.GetString(4), reader.GetString(5), reader.GetFieldValue<DateTimeOffset>(6)));
+        }
+        return subscriptions;
     }
 
     private async Task<NpgsqlConnection> OpenConnectionAsync(CancellationToken cancellationToken)

@@ -1,9 +1,15 @@
 using RetailPulse.BuildingBlocks;
 using RetailPulse.Cloud;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Azure.Identity;
 using System.Text;
 
 var builder = WebApplication.CreateBuilder(args);
+var keyVaultUri = builder.Configuration["AzureKeyVault:VaultUri"];
+if (Uri.TryCreate(keyVaultUri, UriKind.Absolute, out var keyVaultEndpoint))
+{
+    builder.Configuration.AddAzureKeyVault(keyVaultEndpoint, new DefaultAzureCredential());
+}
 var entraTenantId = builder.Configuration["Entra:TenantId"];
 var entraAudience = builder.Configuration["Entra:Audience"];
 var entraConfigured = !string.IsNullOrWhiteSpace(entraTenantId) && !string.IsNullOrWhiteSpace(entraAudience);
@@ -37,6 +43,9 @@ var cloudDatabasePath = builder.Configuration["RetailPulse:CloudDatabasePath"] ?
 var postgresConnectionString = builder.Configuration.GetConnectionString("Postgres");
 var useSqliteCloudLedger = builder.Configuration.GetValue<bool>("RetailPulse:UseSqliteCloudLedger");
 var pushVapidPublicKey = builder.Configuration["Push:VapidPublicKey"];
+var pushVapidPrivateKey = builder.Configuration["Push:VapidPrivateKey"];
+var serviceBusNamespace = builder.Configuration["ServiceBus:FullyQualifiedNamespace"];
+builder.Services.AddSingleton<IPushNotificationQueue, PushNotificationQueue>();
 builder.Services.AddSingleton<IIdentityAuditEmitter>(_ => useSqliteCloudLedger || string.IsNullOrWhiteSpace(postgresConnectionString)
     ? new NoOpIdentityAuditEmitter()
     : new PostgresIdentityAuditEmitter(postgresConnectionString));
@@ -46,18 +55,28 @@ builder.Services.AddSingleton<IIdentityLifecycleService>(_ => useSqliteCloudLedg
 builder.Services.AddSingleton<IIdentityRevocationStore>(_ => useSqliteCloudLedger || string.IsNullOrWhiteSpace(postgresConnectionString)
     ? new InMemoryIdentityRevocationStore()
     : new PostgresIdentityRevocationStore(postgresConnectionString));
+builder.Services.AddSingleton<IDomainEventPublisher>(services => string.IsNullOrWhiteSpace(serviceBusNamespace)
+    ? new NoOpDomainEventPublisher()
+    : new ServiceBusDomainEventPublisher(serviceBusNamespace, services.GetRequiredService<IPushNotificationQueue>()));
 builder.Services.AddSingleton<ICatalogRepository, CloudCatalogRepository>();
 builder.Services.AddSingleton<IInventoryLedgerRepository>(_ => useSqliteCloudLedger || string.IsNullOrWhiteSpace(postgresConnectionString)
     ? new SqliteInventoryLedger(cloudDatabasePath)
     : new PostgresInventoryLedger(postgresConnectionString));
 builder.Services.AddSingleton<ICatalogInventoryAuthorization, CloudInventoryAuthorization>();
 builder.Services.AddSingleton<CatalogInventoryService>();
-builder.Services.AddSingleton<IInventoryCommandService, InMemoryInventoryCommandService>();
+builder.Services.AddSingleton<IInventoryCommandService>(services => new InMemoryInventoryCommandService(
+    services.GetRequiredService<CatalogInventoryService>(),
+    services.GetRequiredService<IDomainEventPublisher>()));
 builder.Services.AddSingleton<ISyncHealthReader>(_ => new PostgresSyncHealthReader(useSqliteCloudLedger ? null : postgresConnectionString));
 builder.Services.AddSingleton<IAlertsReader>(_ => new PostgresAlertsReader(useSqliteCloudLedger ? null : postgresConnectionString));
 builder.Services.AddSingleton<IStoreSettingsRepository>(_ => new PostgresStoreSettingsRepository(useSqliteCloudLedger ? null : postgresConnectionString));
 builder.Services.AddSingleton<IInsightsService, InMemoryInsightsService>();
 builder.Services.AddSingleton<IPushSubscriptionStore>(_ => new PostgresPushSubscriptionStore(useSqliteCloudLedger ? null : postgresConnectionString));
+builder.Services.AddSingleton<IPushNotificationSender>(_ =>
+    string.IsNullOrWhiteSpace(pushVapidPublicKey) || string.IsNullOrWhiteSpace(pushVapidPrivateKey)
+        ? new NoOpPushNotificationSender()
+        : new VapidPushNotificationSender(pushVapidPublicKey, pushVapidPrivateKey));
+    builder.Services.AddHostedService<PushNotificationWorker>();
 builder.Services.AddSingleton<IAnalyticsReportProvider, SimulatedAnalyticsReportProvider>();
 
 var app = builder.Build();
@@ -296,7 +315,7 @@ app.MapPost("/api/v1/tenants/{tenantId}/stores/{storeId}/manager/inventory-adjus
     });
 
 app.MapPost("/api/v1/tenants/{tenantId}/stores/{storeId}/devices/register",
-    async (string tenantId, string storeId, HttpRequest request, IIdentityAuditEmitter auditEmitter, IIdentityRevocationStore revocations, IIdentityLifecycleService lifecycle) =>
+    async (string tenantId, string storeId, HttpRequest request, IIdentityAuditEmitter auditEmitter, IIdentityRevocationStore revocations, IIdentityLifecycleService lifecycle, IDomainEventPublisher events) =>
     {
         var authorization = await AuthorizeAsync(request, new TenantStoreScope(tenantId, storeId), AuthorizationAction.RegisterDevice, auditEmitter, revocations);
         if (authorization.Result is not null)
@@ -317,6 +336,7 @@ app.MapPost("/api/v1/tenants/{tenantId}/stores/{storeId}/devices/register",
         var result = await lifecycle.RegisterDeviceAsync(command);
         if (result.Outcome == IdentityCommandOutcome.Accepted)
         {
+            await events.PublishAsync("DeviceRegistered.v1", result.RegisteredEvent!, request.HttpContext.RequestAborted);
             return Results.Ok(new { Outcome = "Accepted", Event = result.RegisteredEvent });
         }
 
@@ -324,7 +344,7 @@ app.MapPost("/api/v1/tenants/{tenantId}/stores/{storeId}/devices/register",
     });
 
 app.MapPost("/api/v1/tenants/{tenantId}/stores/{storeId}/devices/{deviceId}/revoke",
-    async (string tenantId, string storeId, string deviceId, HttpRequest request, IIdentityAuditEmitter auditEmitter, IIdentityRevocationStore revocations, IIdentityLifecycleService lifecycle) =>
+    async (string tenantId, string storeId, string deviceId, HttpRequest request, IIdentityAuditEmitter auditEmitter, IIdentityRevocationStore revocations, IIdentityLifecycleService lifecycle, IDomainEventPublisher events) =>
     {
         var authorization = await AuthorizeAsync(request, new TenantStoreScope(tenantId, storeId), AuthorizationAction.RevokeDevice, auditEmitter, revocations);
         if (authorization.Result is not null)
@@ -348,11 +368,15 @@ app.MapPost("/api/v1/tenants/{tenantId}/stores/{storeId}/devices/{deviceId}/revo
         }
 
         revocations.RevokeSubject(tenantId, deviceId);
+        if (result.Outcome == IdentityCommandOutcome.Accepted)
+        {
+            await events.PublishAsync("DeviceRevoked.v1", result.RevokedEvent!, request.HttpContext.RequestAborted);
+        }
         return Results.Ok(new { Outcome = result.Outcome.ToString(), Event = result.RevokedEvent });
     });
 
 app.MapPost("/api/v1/tenants/{tenantId}/stores/{storeId}/users/{subjectId}/roles",
-    async (string tenantId, string storeId, string subjectId, HttpRequest request, IIdentityAuditEmitter auditEmitter, IIdentityRevocationStore revocations, IIdentityLifecycleService lifecycle) =>
+    async (string tenantId, string storeId, string subjectId, HttpRequest request, IIdentityAuditEmitter auditEmitter, IIdentityRevocationStore revocations, IIdentityLifecycleService lifecycle, IDomainEventPublisher events) =>
     {
         var authorization = await AuthorizeAsync(request, new TenantStoreScope(tenantId, storeId), AuthorizationAction.ManageRoles, auditEmitter, revocations);
         if (authorization.Result is not null)
@@ -371,6 +395,10 @@ app.MapPost("/api/v1/tenants/{tenantId}/stores/{storeId}/users/{subjectId}/roles
         var command = new UserRoleChangeCommand(tenantId, storeId, subjectId, roles, commandId, actor.SubjectId, CorrelationId(request), DateTimeOffset.UtcNow);
         var result = await lifecycle.ChangeUserRolesAsync(command);
         revocations.RevokeSubject(tenantId, subjectId);
+        if (result.Outcome == IdentityCommandOutcome.Accepted)
+        {
+            await events.PublishAsync("UserRoleChanged.v1", result.RoleChangedEvent!, request.HttpContext.RequestAborted);
+        }
         return Results.Ok(new { Outcome = result.Outcome.ToString(), Event = result.RoleChangedEvent });
     });
 

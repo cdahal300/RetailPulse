@@ -10,6 +10,7 @@
         "ASPNETCORE_ENVIRONMENT": "Development",
         "RetailPulse_TenantMap": "84461914-7d3c-452f-bcff-cab760563700=tenant-1",
         "RetailPulse_StoreGroupMap": "83eaec73-75ad-4b59-a33e-4cc296fdbc03=store-1"
+        ,"ServiceBus__FullyQualifiedNamespace": ""
       }
     },
     "https": {

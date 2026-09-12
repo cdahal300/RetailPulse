@@ -26,7 +26,7 @@ Feature folders currently begin as planning briefs. Before an implementation sta
 
 | ID | Feature | Primary boundary | Status |
 |---|---|---|---|
-| FEAT-009 | Manager and owner PWA | Web / PWA | Definition of Ready complete |
+| FEAT-009 | Manager and owner PWA | Web / PWA | Implementation complete; staging evidence pending |
 | FEAT-010 | Analytics and reporting | Cloud / Analytics | Definition of Ready complete |
 | FEAT-011 | External payment-provider adapter | Edge / External | Definition of Ready complete; provider-dependent |
 | FEAT-012 | Feature-flag controlled rollout | Platform | Definition of Ready complete; design accepted |

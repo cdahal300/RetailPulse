@@ -243,6 +243,43 @@ resource serviceBus 'Microsoft.ServiceBus/namespaces@2024-01-01' = {
   }
 }
 
+resource serviceBusTopic 'Microsoft.ServiceBus/namespaces/topics@2024-01-01' = {
+  parent: serviceBus
+  name: 'retailpulse-events'
+  properties: {
+    defaultMessageTimeToLive: 'P14D'
+    maxSizeInMegabytes: 1024
+    requiresDuplicateDetection: true
+    duplicateDetectionHistoryTimeWindow: 'PT10M'
+  }
+}
+
+resource serviceBusSenderRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(serviceBus.id, workloadIdentity.id, 'ServiceBusDataSender')
+  scope: serviceBus
+  properties: {
+    roleDefinitionId: subscriptionResourceId(
+      'Microsoft.Authorization/roleDefinitions',
+      '2a2b9908-6ea1-4ae2-8e65-a410df84e7d1'
+    )
+    principalId: workloadIdentity.properties.principalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
+resource keyVaultSecretsUserRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(keyVault.id, workloadIdentity.id, 'KeyVaultSecretsUser')
+  scope: keyVault
+  properties: {
+    roleDefinitionId: subscriptionResourceId(
+      'Microsoft.Authorization/roleDefinitions',
+      '4633458b-17de-408a-b874-0445c86b69e6'
+    )
+    principalId: workloadIdentity.properties.principalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
 resource storage 'Microsoft.Storage/storageAccounts@2023-05-01' = {
   name: storageName
   location: location
@@ -417,6 +454,7 @@ output aksClusterPrincipalId string = aks.identity.principalId
 output workloadIdentityClientId string = workloadIdentity.properties.clientId
 output acrLoginServer string = containerRegistry.properties.loginServer
 output keyVaultName string = keyVault.name
+output keyVaultUri string = keyVault.properties.vaultUri
 output postgresServerName string = postgres.name
 output postgresDatabaseName string = postgresDb.name
 output serviceBusNamespace string = serviceBus.name

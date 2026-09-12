@@ -17,12 +17,17 @@ Configure these GitHub environment variables for each deployment environment:
 - `AZURE_SUBSCRIPTION_ID`: Target Azure subscription ID.
 - `AZURE_TENANT_ID`: Target Microsoft Entra tenant ID.
 - `OWNER_TAG`: Owner tag used when optional infrastructure deployment is enabled.
+- `SERVICE_BUS_FULLY_QUALIFIED_NAMESPACE`: Service Bus namespace hostname used by the managed-identity event publisher.
+- `PUSH_VAPID_PUBLIC_KEY`: Public VAPID key exposed to the cloud API for browser push registration.
+- `KEY_VAULT_URI`: URI of the environment Key Vault containing the `Push--VapidPrivateKey` secret.
 
 Configure these GitHub environment secrets:
 
 - `POSTGRES_ADMIN_PASSWORD`: PostgreSQL admin password used only when optional infrastructure deployment is enabled.
 - `POSTGRES_CONNECTION_STRING`: Runtime PostgreSQL connection string for the application.
 - `REDIS_CONNECTION_STRING`: Optional runtime Redis connection string for the application when Redis is enabled.
+
+Store the private VAPID key in Key Vault under the secret name `Push--VapidPrivateKey`. The AKS workload identity receives the `Key Vault Secrets User` role; the private key is never passed through GitHub Actions or Kubernetes manifests.
 
 ## Dev Deployment
 

@@ -19,6 +19,9 @@ data:
   Entra__TenantId: ""
   Entra__Audience: ""
   Portal__AllowedOrigins: ""
+  AzureKeyVault__VaultUri: ""
+  ServiceBus__FullyQualifiedNamespace: ""
+  Push__VapidPublicKey: ""
 ---
 # NetworkPolicy: Deny all ingress by default
 apiVersion: networking.k8s.io/v1

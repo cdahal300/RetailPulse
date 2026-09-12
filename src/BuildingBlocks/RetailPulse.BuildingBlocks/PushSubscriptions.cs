@@ -6,4 +6,5 @@ public interface IPushSubscriptionStore
 {
     Task RegisterAsync(PushSubscription subscription, CancellationToken cancellationToken = default);
     Task RemoveAsync(TenantStoreScope scope, string subjectId, string endpoint, CancellationToken cancellationToken = default);
+    Task<IReadOnlyList<PushSubscription>> ListAsync(TenantStoreScope scope, CancellationToken cancellationToken = default);
 }

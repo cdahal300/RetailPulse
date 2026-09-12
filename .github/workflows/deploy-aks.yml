@@ -183,9 +183,10 @@ jobs:
           AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
           AKS_CLUSTER_NAME: ${{ vars.AKS_CLUSTER_NAME }}
           POSTGRES_CONNECTION_STRING: ${{ secrets.POSTGRES_CONNECTION_STRING }}
+          SERVICE_BUS_NAMESPACE: ${{ vars.SERVICE_BUS_FULLY_QUALIFIED_NAMESPACE }}
         run: |
           set -euo pipefail
-          for name in AZURE_RESOURCE_GROUP AKS_CLUSTER_NAME POSTGRES_CONNECTION_STRING; do
+          for name in AZURE_RESOURCE_GROUP AKS_CLUSTER_NAME POSTGRES_CONNECTION_STRING SERVICE_BUS_NAMESPACE; do
             if [[ -z "${!name}" ]]; then
               echo "Missing GitHub environment setting: ${name}"
               exit 1
@@ -199,6 +200,7 @@ jobs:
           AZURE_LOCATION: ${{ vars.AZURE_LOCATION }}
           OWNER_TAG: ${{ vars.OWNER_TAG }}
           POSTGRES_ADMIN_PASSWORD: ${{ secrets.POSTGRES_ADMIN_PASSWORD }}
+          SERVICE_BUS_NAMESPACE: ${{ vars.SERVICE_BUS_FULLY_QUALIFIED_NAMESPACE }}
         run: |
           set -euo pipefail
           for name in AZURE_LOCATION OWNER_TAG POSTGRES_ADMIN_PASSWORD; do
@@ -214,6 +216,14 @@ jobs:
             "${{ needs.build.outputs.overlay }}" \
             "$OWNER_TAG" \
             "$POSTGRES_ADMIN_PASSWORD"
+          az servicebus topic create \
+            --resource-group "$AZURE_RESOURCE_GROUP" \
+            --namespace-name "${SERVICE_BUS_NAMESPACE%%.*}" \
+            --name retailpulse-events \
+            --enable-duplicate-detection true \
+            --default-message-time-to-live P14D \
+            --max-size 1024 \
+            --output none
       - name: Configure AKS credentials
         shell: bash
         env:
@@ -246,6 +256,8 @@ jobs:
           CLOUD_IMAGE: ${{ needs.build.outputs.cloud_image }}@${{ needs.build.outputs.cloud_digest }}
           EDGE_IMAGE: ${{ needs.build.outputs.edge_image }}@${{ needs.build.outputs.edge_digest }}
           OVERLAY: ${{ needs.build.outputs.overlay }}
+          SERVICE_BUS_NAMESPACE: ${{ vars.SERVICE_BUS_FULLY_QUALIFIED_NAMESPACE }}
+          PUSH_VAPID_PUBLIC_KEY: ${{ vars.PUSH_VAPID_PUBLIC_KEY }}
         run: |
           set -euo pipefail
           work_dir="$RUNNER_TEMP/kubernetes"
@@ -270,6 +282,8 @@ jobs:
           EOF
           kubectl kustomize "$work_dir/overlays/${OVERLAY}" > "$rendered"
           kubectl apply -f "$rendered"
+          kubectl patch configmap retailpulse-config -n retailpulse --type merge -p "$(jq -n --arg serviceBus "$SERVICE_BUS_NAMESPACE" --arg vapid "$PUSH_VAPID_PUBLIC_KEY" '{data:{ServiceBus__FullyQualifiedNamespace:$serviceBus,Push__VapidPublicKey:$vapid}}')"
+          kubectl rollout restart deployment/cloud-api -n retailpulse
           kubectl annotate deployment/cloud-api -n retailpulse \
             retailpulse.com/commit-sha="${GITHUB_SHA}" \
             retailpulse.com/image-digest="${{ needs.build.outputs.cloud_digest }}" \

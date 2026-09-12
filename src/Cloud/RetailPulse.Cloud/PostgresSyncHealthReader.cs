@@ -22,6 +22,7 @@ public sealed class PostgresSyncHealthReader(string? connectionString) : ISyncHe
 
         await using var connection = new NpgsqlConnection(connectionString);
         await connection.OpenAsync(cancellationToken);
+        await PostgresScope.SetAsync(connection, null, scope.TenantId, scope.StoreId, cancellationToken);
         await using var command = connection.CreateCommand();
         command.CommandText = "SELECT COUNT(*) FILTER (WHERE status IN ('Pending', 'Retry', 'InFlight')), MIN(occurred_at) FILTER (WHERE status IN ('Pending', 'Retry', 'InFlight')), MAX(last_attempt_at) FILTER (WHERE status = 'Synced'), COUNT(*) FILTER (WHERE status = 'Retry'), COUNT(*) FILTER (WHERE status = 'Review'), COUNT(*) FILTER (WHERE status = 'DeadLetter') FROM sync_delivery_status WHERE tenant_id = @tenant AND store_id = @store;";
         command.Parameters.AddWithValue("tenant", scope.TenantId);

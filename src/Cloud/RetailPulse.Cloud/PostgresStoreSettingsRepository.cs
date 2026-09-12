@@ -24,6 +24,7 @@ public sealed class PostgresStoreSettingsRepository(string? connectionString) : 
     {
         if (string.IsNullOrWhiteSpace(connectionString)) return expectedVersion == settings.Version ? settings with { Version = expectedVersion + 1 } : null;
         await using var connection = await OpenConnectionAsync(cancellationToken);
+        await PostgresScope.SetAsync(connection, null, settings.TenantId, settings.StoreId, cancellationToken);
         await using var command = connection.CreateCommand();
         command.CommandText = "INSERT INTO store_settings (tenant_id, store_id, display_name, time_zone, currency, inventory_adjustments_enabled, version) VALUES (@tenant, @store, @name, @timezone, @currency, @enabled, @version) ON CONFLICT (tenant_id, store_id) DO UPDATE SET display_name = EXCLUDED.display_name, time_zone = EXCLUDED.time_zone, currency = EXCLUDED.currency, inventory_adjustments_enabled = EXCLUDED.inventory_adjustments_enabled, version = EXCLUDED.version WHERE store_settings.version = @expected RETURNING version;";
         command.Parameters.AddWithValue("tenant", settings.TenantId);

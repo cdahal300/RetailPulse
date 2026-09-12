@@ -37,6 +37,7 @@ var cloudDatabasePath = builder.Configuration["RetailPulse:CloudDatabasePath"] ?
 var postgresConnectionString = builder.Configuration.GetConnectionString("Postgres");
 var useSqliteCloudLedger = builder.Configuration.GetValue<bool>("RetailPulse:UseSqliteCloudLedger");
 var pushVapidPublicKey = builder.Configuration["Push:VapidPublicKey"];
+var serviceBusNamespace = builder.Configuration["ServiceBus:FullyQualifiedNamespace"];
 builder.Services.AddSingleton<IIdentityAuditEmitter>(_ => useSqliteCloudLedger || string.IsNullOrWhiteSpace(postgresConnectionString)
     ? new NoOpIdentityAuditEmitter()
     : new PostgresIdentityAuditEmitter(postgresConnectionString));
@@ -46,6 +47,9 @@ builder.Services.AddSingleton<IIdentityLifecycleService>(_ => useSqliteCloudLedg
 builder.Services.AddSingleton<IIdentityRevocationStore>(_ => useSqliteCloudLedger || string.IsNullOrWhiteSpace(postgresConnectionString)
     ? new InMemoryIdentityRevocationStore()
     : new PostgresIdentityRevocationStore(postgresConnectionString));
+builder.Services.AddSingleton<IDomainEventPublisher>(_ => string.IsNullOrWhiteSpace(serviceBusNamespace)
+    ? new NoOpDomainEventPublisher()
+    : new ServiceBusDomainEventPublisher(serviceBusNamespace));
 builder.Services.AddSingleton<ICatalogRepository, CloudCatalogRepository>();
 builder.Services.AddSingleton<IInventoryLedgerRepository>(_ => useSqliteCloudLedger || string.IsNullOrWhiteSpace(postgresConnectionString)
     ? new SqliteInventoryLedger(cloudDatabasePath)
@@ -296,7 +300,7 @@ app.MapPost("/api/v1/tenants/{tenantId}/stores/{storeId}/manager/inventory-adjus
     });
 
 app.MapPost("/api/v1/tenants/{tenantId}/stores/{storeId}/devices/register",
-    async (string tenantId, string storeId, HttpRequest request, IIdentityAuditEmitter auditEmitter, IIdentityRevocationStore revocations, IIdentityLifecycleService lifecycle) =>
+    async (string tenantId, string storeId, HttpRequest request, IIdentityAuditEmitter auditEmitter, IIdentityRevocationStore revocations, IIdentityLifecycleService lifecycle, IDomainEventPublisher events) =>
     {
         var authorization = await AuthorizeAsync(request, new TenantStoreScope(tenantId, storeId), AuthorizationAction.RegisterDevice, auditEmitter, revocations);
         if (authorization.Result is not null)
@@ -317,6 +321,7 @@ app.MapPost("/api/v1/tenants/{tenantId}/stores/{storeId}/devices/register",
         var result = await lifecycle.RegisterDeviceAsync(command);
         if (result.Outcome == IdentityCommandOutcome.Accepted)
         {
+            await events.PublishAsync("DeviceRegistered.v1", result.RegisteredEvent!, request.HttpContext.RequestAborted);
             return Results.Ok(new { Outcome = "Accepted", Event = result.RegisteredEvent });
         }
 
@@ -324,7 +329,7 @@ app.MapPost("/api/v1/tenants/{tenantId}/stores/{storeId}/devices/register",
     });
 
 app.MapPost("/api/v1/tenants/{tenantId}/stores/{storeId}/devices/{deviceId}/revoke",
-    async (string tenantId, string storeId, string deviceId, HttpRequest request, IIdentityAuditEmitter auditEmitter, IIdentityRevocationStore revocations, IIdentityLifecycleService lifecycle) =>
+    async (string tenantId, string storeId, string deviceId, HttpRequest request, IIdentityAuditEmitter auditEmitter, IIdentityRevocationStore revocations, IIdentityLifecycleService lifecycle, IDomainEventPublisher events) =>
     {
         var authorization = await AuthorizeAsync(request, new TenantStoreScope(tenantId, storeId), AuthorizationAction.RevokeDevice, auditEmitter, revocations);
         if (authorization.Result is not null)
@@ -348,11 +353,15 @@ app.MapPost("/api/v1/tenants/{tenantId}/stores/{storeId}/devices/{deviceId}/revo
         }
 
         revocations.RevokeSubject(tenantId, deviceId);
+        if (result.Outcome == IdentityCommandOutcome.Accepted)
+        {
+            await events.PublishAsync("DeviceRevoked.v1", result.RevokedEvent!, request.HttpContext.RequestAborted);
+        }
         return Results.Ok(new { Outcome = result.Outcome.ToString(), Event = result.RevokedEvent });
     });
 
 app.MapPost("/api/v1/tenants/{tenantId}/stores/{storeId}/users/{subjectId}/roles",
-    async (string tenantId, string storeId, string subjectId, HttpRequest request, IIdentityAuditEmitter auditEmitter, IIdentityRevocationStore revocations, IIdentityLifecycleService lifecycle) =>
+    async (string tenantId, string storeId, string subjectId, HttpRequest request, IIdentityAuditEmitter auditEmitter, IIdentityRevocationStore revocations, IIdentityLifecycleService lifecycle, IDomainEventPublisher events) =>
     {
         var authorization = await AuthorizeAsync(request, new TenantStoreScope(tenantId, storeId), AuthorizationAction.ManageRoles, auditEmitter, revocations);
         if (authorization.Result is not null)
@@ -371,6 +380,10 @@ app.MapPost("/api/v1/tenants/{tenantId}/stores/{storeId}/users/{subjectId}/roles
         var command = new UserRoleChangeCommand(tenantId, storeId, subjectId, roles, commandId, actor.SubjectId, CorrelationId(request), DateTimeOffset.UtcNow);
         var result = await lifecycle.ChangeUserRolesAsync(command);
         revocations.RevokeSubject(tenantId, subjectId);
+        if (result.Outcome == IdentityCommandOutcome.Accepted)
+        {
+            await events.PublishAsync("UserRoleChanged.v1", result.RoleChangedEvent!, request.HttpContext.RequestAborted);
+        }
         return Results.Ok(new { Outcome = result.Outcome.ToString(), Event = result.RoleChangedEvent });
     });
 

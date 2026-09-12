@@ -17,6 +17,8 @@ Configure these GitHub environment variables for each deployment environment:
 - `AZURE_SUBSCRIPTION_ID`: Target Azure subscription ID.
 - `AZURE_TENANT_ID`: Target Microsoft Entra tenant ID.
 - `OWNER_TAG`: Owner tag used when optional infrastructure deployment is enabled.
+- `SERVICE_BUS_FULLY_QUALIFIED_NAMESPACE`: Service Bus namespace hostname used by the managed-identity event publisher.
+- `PUSH_VAPID_PUBLIC_KEY`: Public VAPID key exposed to the cloud API for browser push registration.
 
 Configure these GitHub environment secrets:
 

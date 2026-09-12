@@ -27,6 +27,7 @@ public sealed class PostgresPushSubscriptionStore(string? connectionString) : IP
     {
         if (string.IsNullOrWhiteSpace(connectionString)) return;
         await using var connection = await OpenConnectionAsync(cancellationToken);
+        await PostgresScope.SetAsync(connection, null, scope.TenantId, scope.StoreId, cancellationToken);
         await using var command = connection.CreateCommand();
         command.CommandText = "DELETE FROM push_subscriptions WHERE tenant_id = @tenant AND store_id = @store AND subject_id = @subject AND endpoint = @endpoint;";
         command.Parameters.AddWithValue("tenant", scope.TenantId);

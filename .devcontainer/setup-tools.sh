@@ -28,6 +28,10 @@ install_pwa() {
   local pwa_dir="src/Web/RetailPulse.Portal"
   if [[ -f "$pwa_dir/package.json" ]]; then
     npm --prefix "$pwa_dir" install
+    if [[ -x "$pwa_dir/node_modules/.bin/playwright" ]]; then
+      sudo -n env "PATH=$PATH" "$pwa_dir/node_modules/.bin/playwright" install chromium webkit
+      sudo -n env "PATH=$PATH" "$pwa_dir/node_modules/.bin/playwright" install-deps chromium webkit
+    fi
   fi
 }
 

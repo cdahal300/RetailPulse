@@ -30,7 +30,8 @@
         "ms-azuretools.vscode-bicep",
         "dbaeumer.vscode-eslint",
         "esbenp.prettier-vscode",
-        "ms-playwright.playwright"
+        "ms-playwright.playwright",
+        "ms-ossdata.vscode-pgsql"
       ],
       "settings": {
         "dotnet.defaultSolution": "RetailPulse.sln",

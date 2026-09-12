@@ -218,11 +218,11 @@ resource keyVault 'Microsoft.KeyVault/vaults@2023-07-01' = {
     }
     enableRbacAuthorization: true
     enablePurgeProtection: true
-    publicNetworkAccess: 'Disabled'
+    publicNetworkAccess: environment == 'prod' ? 'Disabled' : 'Enabled'
     softDeleteRetentionInDays: 90
     networkAcls: {
       bypass: 'AzureServices'
-      defaultAction: 'Deny'
+      defaultAction: environment == 'prod' ? 'Deny' : 'Allow'
     }
   }
 }

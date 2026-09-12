@@ -284,8 +284,16 @@ jobs:
           EOF
           kubectl kustomize "$work_dir/overlays/${OVERLAY}" > "$rendered"
           kubectl apply -f "$rendered"
+          WORKLOAD_IDENTITY_CLIENT_ID="$(az identity show \
+            --resource-group "$AZURE_RESOURCE_GROUP" \
+            --name "retailpulse-${OVERLAY}-uami" \
+            --query clientId -o tsv)"
+          if [[ -z "$WORKLOAD_IDENTITY_CLIENT_ID" ]]; then
+            echo "Unable to resolve workload identity client ID."
+            exit 1
+          fi
           kubectl annotate serviceaccount retailpulse-app -n retailpulse \
-            azure.workload.identity/client-id="$AZURE_CLIENT_ID" \
+            azure.workload.identity/client-id="$WORKLOAD_IDENTITY_CLIENT_ID" \
             --overwrite
           kubectl patch configmap retailpulse-config -n retailpulse --type merge -p "$(jq -n --arg serviceBus "$SERVICE_BUS_NAMESPACE" --arg vapid "$PUSH_VAPID_PUBLIC_KEY" --arg keyVault "$KEY_VAULT_URI" '{data:{ServiceBus__FullyQualifiedNamespace:$serviceBus,Push__VapidPublicKey:$vapid,AzureKeyVault__VaultUri:$keyVault}}')"
           kubectl rollout restart deployment/cloud-api -n retailpulse

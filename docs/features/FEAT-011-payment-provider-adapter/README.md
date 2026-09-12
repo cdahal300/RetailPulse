@@ -17,6 +17,7 @@ Adapter boundary and sandbox mapping implemented; provider certification, hardwa
 - No PAN, CVV, PIN, magnetic-stripe, or raw card fields are present in the adapter contract.
 - Edge runtime defaults to the local sandbox gateway and can select Stripe test mode through `Payment__Provider=Stripe`.
 - Stripe test credentials resolve from Key Vault secret `Payment--Stripe--ApiKey`.
+- Authorized Edge payment authorization is exposed without accepting card data and emits a versioned payment event.
 
 ## Scope
 

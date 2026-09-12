@@ -2,7 +2,7 @@
 
 ## Functional behavior
 
-Current status: the external gateway boundary, Stripe test-mode wiring, status mapping, opaque reference requirement, and duplicate-safe authorization behavior are implemented and unit-tested. Certified terminal/provider integration, supported refunds, and production reconciliation remain pending.
+Current status: the external gateway boundary, Stripe test-mode wiring, authorized Edge payment command, status mapping, opaque reference requirement, and duplicate-safe authorization behavior are implemented and unit-tested. Status lookup, refunds, certified terminal/provider integration, and production reconciliation remain pending.
 
 - Given an approved amount and transaction context, when the adapter requests authorization, then the certified terminal/PSP returns mapped approved, declined, cancelled, pending, or failed status and an opaque provider reference.
 - Given a supported refund, when the adapter submits it, then the refund is tied to the provider reference and reconciliation state without exposing card data.

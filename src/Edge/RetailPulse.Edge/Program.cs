@@ -26,6 +26,7 @@ builder.Services.AddSingleton<IPaymentProvider>(services =>
 				builder.Configuration["Payment:Stripe:ApiKey"] ?? string.Empty,
 				builder.Configuration["Payment:Stripe:PaymentMethodId"] ?? "pm_card_visa"))
 		: new PaymentProviderAdapter(new SandboxPaymentGateway()));
+builder.Services.AddSingleton<IPaymentLifecycleService, PaymentLifecycleService>();
 var app = builder.Build();
 
 app.MapGet("/", () => "RetailPulse Edge");
@@ -82,6 +83,22 @@ app.MapPost("/api/v1/edge/tenants/{tenantId}/stores/{storeId}/checkout",
 			ActorId = authorization.Token!.SubjectId,
 			Roles = authorization.Token.Roles.Select(role => role.ToString()).ToArray()
 		});
+	});
+
+app.MapPost("/api/v1/edge/tenants/{tenantId}/stores/{storeId}/payments/authorize",
+	async (string tenantId, string storeId, HttpRequest request, BoundedAuthorizationSessionCache cache, IIdentityAuditEmitter auditEmitter, IIdentityRevocationStore revocations, IPaymentLifecycleService payments) =>
+	{
+		var authorization = await AuthorizeAsync(request, new TenantStoreScope(tenantId, storeId), AuthorizationAction.ExecuteCheckout, cache, auditEmitter, revocations);
+		if (authorization.Result is not null) return authorization.Result;
+		var input = await request.ReadFromJsonAsync<PaymentAuthorizationRequest>(request.HttpContext.RequestAborted);
+		if (input is null || string.IsNullOrWhiteSpace(input.TerminalId) || string.IsNullOrWhiteSpace(input.LocalTransactionId) || string.IsNullOrWhiteSpace(input.Currency) || input.AmountMinor <= 0)
+		{
+			return Results.BadRequest(new { Error = "TerminalId, LocalTransactionId, positive AmountMinor, and Currency are required." });
+		}
+		var commandId = request.Headers["X-RetailPulse-Command-Id"].FirstOrDefault();
+		if (string.IsNullOrWhiteSpace(commandId)) return Results.BadRequest(new { Error = "X-RetailPulse-Command-Id is required." });
+		var result = await payments.AuthorizeAsync(new PaymentAuthorizationCommand(tenantId, storeId, input.TerminalId, input.LocalTransactionId, new Money(input.AmountMinor, input.Currency), CorrelationId(request), commandId), request.HttpContext.RequestAborted);
+		return Results.Ok(new { Status = result.Result.Status.ToString(), result.Result.ProviderTransactionReference, Event = result.Event });
 	});
 
 app.MapPost("/api/v1/edge/tenants/{tenantId}/stores/{storeId}/inventory/adjust",

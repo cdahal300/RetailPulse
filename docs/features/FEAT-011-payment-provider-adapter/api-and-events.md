@@ -4,6 +4,7 @@
 
 - Adapter interface: `Authorize`, `Cancel`, `GetStatus`, and supported `Refund` accept amount, currency, transaction ID, terminal context, and idempotency key; they return status and opaque provider reference.
 - No public card-processing API is exposed by RetailPulse; provider/terminal APIs are external contracts and remain behind the adapter.
+- Edge authorization endpoint: `POST /api/v1/edge/tenants/{tenantId}/stores/{storeId}/payments/authorize` requires checkout authorization and `X-RetailPulse-Command-Id`; its body contains terminal/transaction context and amount/currency only.
 - Stripe test mode uses `Payment__Provider=Stripe`, `Payment__Stripe__PaymentMethodId=pm_card_visa`, and a Key Vault-backed `Payment--Stripe--ApiKey` secret; sandbox remains the default.
 - Authentication and authorization: payment service/device identity, store/terminal binding, refund policy, and environment-specific provider credentials are required.
 - Idempotency behavior: local transaction ID plus provider idempotency key is reused across retries; uncertain outcomes require status lookup before a new authorization.

@@ -5,6 +5,7 @@ using System.Text.Json;
 namespace RetailPulse.Edge;
 
 public sealed record ExternalPaymentAuthorization(string Status, string? ProviderReference = null, string? AuthorizationCode = null);
+public sealed record PaymentAuthorizationRequest(string TerminalId, string LocalTransactionId, long AmountMinor, string Currency);
 
 public interface IExternalPaymentGateway
 {

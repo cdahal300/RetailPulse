@@ -10,6 +10,8 @@ Product scope is summarized in [docs/product](../product/README.md), and deliver
 
 The first implementation slice is [FEAT-001 Reliable Checkout and Cloud Recovery](FEAT-001-offline-checkout/README.md). The remaining platform and product capabilities are documented as planned feature briefs so implementation can proceed deliberately rather than creating undocumented infrastructure or cross-cutting behavior.
 
+The multi-customer onboarding brief is [FEAT-014 Tenant Onboarding and Multi-Store Operations](FEAT-014-tenant-onboarding/README.md). It defines the boundary between an internal RetailPulse tenant, external identity tenants, stores, users, managers, owners, and devices.
+
 ## Definition of Ready
 
 A feature is ready for implementation when its folder contains:

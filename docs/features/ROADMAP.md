@@ -13,6 +13,7 @@ Feature folders currently begin as planning briefs. Before an implementation sta
 | FEAT-003 | Cloud synchronization and idempotency | Edge / Cloud | Definition of Ready complete |
 | FEAT-004 | Catalog and inventory management | Edge / Cloud | Definition of Ready complete |
 | FEAT-005 | Identity and role authorization | Cloud / Edge / PWA | Definition of Ready complete |
+| FEAT-014 | Tenant onboarding and multi-store operations | Cloud / Identity / PWA | Definition of Ready complete; implementation pending |
 
 ## Platform delivery
 

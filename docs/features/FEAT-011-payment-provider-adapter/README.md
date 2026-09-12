@@ -4,6 +4,18 @@
 
 As a cashier, I want RetailPulse to work with a selected certified terminal and PSP without RetailPulse handling card data.
 
+## Status
+
+Adapter boundary and sandbox mapping implemented; provider certification, hardware integration, refunds, and production reconciliation remain pending.
+
+## Verified Slice
+
+- External gateway accepts only amount, currency, terminal/transaction context, correlation ID, and idempotency key.
+- Adapter maps approved, declined, pending, cancelled, and timeout responses.
+- Duplicate idempotency keys do not invoke the gateway twice.
+- Approved responses require an opaque provider reference.
+- No PAN, CVV, PIN, magnetic-stripe, or raw card fields are present in the adapter contract.
+
 ## Scope
 
 - Adapter interface for authorization, cancellation, status, and supported refunds.

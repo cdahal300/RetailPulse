@@ -259,6 +259,7 @@ jobs:
           SERVICE_BUS_NAMESPACE: ${{ vars.SERVICE_BUS_FULLY_QUALIFIED_NAMESPACE }}
           PUSH_VAPID_PUBLIC_KEY: ${{ vars.PUSH_VAPID_PUBLIC_KEY }}
           KEY_VAULT_URI: ${{ vars.KEY_VAULT_URI }}
+          AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
           AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
         run: |
           set -euo pipefail

@@ -46,6 +46,7 @@ var pushVapidPublicKey = builder.Configuration["Push:VapidPublicKey"];
 var pushVapidPrivateKey = builder.Configuration["Push:VapidPrivateKey"];
 var serviceBusNamespace = builder.Configuration["ServiceBus:FullyQualifiedNamespace"];
 var useEventAnalytics = builder.Configuration.GetValue<bool>("Analytics:UseEventFacts");
+var featureFlagSigningKey = builder.Configuration["FeatureFlags:SnapshotSigningKey"] ?? Convert.ToBase64String(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32));
 builder.Services.AddSingleton<IPushNotificationQueue, PushNotificationQueue>();
 builder.Services.AddSingleton<IIdentityAuditEmitter>(_ => useSqliteCloudLedger || string.IsNullOrWhiteSpace(postgresConnectionString)
     ? new NoOpIdentityAuditEmitter()
@@ -78,6 +79,9 @@ builder.Services.AddSingleton<AnalyticsEventIngestor>();
 builder.Services.AddSingleton<AnalyticsReplayService>();
 builder.Services.AddSingleton<IInsightsService, InMemoryInsightsService>();
 builder.Services.AddSingleton<IPushSubscriptionStore>(_ => new PostgresPushSubscriptionStore(useSqliteCloudLedger ? null : postgresConnectionString));
+builder.Services.AddSingleton(new HmacFeatureFlagSnapshotSigner(Encoding.UTF8.GetBytes(featureFlagSigningKey)));
+builder.Services.AddSingleton<FeatureFlagEvaluator>();
+builder.Services.AddSingleton<IFeatureFlagManagementService, InMemoryFeatureFlagManagementService>();
 builder.Services.AddSingleton<IPushNotificationSender>(_ =>
     string.IsNullOrWhiteSpace(pushVapidPublicKey) || string.IsNullOrWhiteSpace(pushVapidPrivateKey)
         ? new NoOpPushNotificationSender()
@@ -265,6 +269,99 @@ app.MapPut("/api/v1/tenants/{tenantId}/stores/{storeId}/settings",
         }
         var updated = await settings.UpdateAsync(new StoreSettings(tenantId, storeId, input.DisplayName.Trim(), input.TimeZone.Trim(), input.Currency.Trim().ToUpperInvariant(), input.InventoryAdjustmentsEnabled, input.ExpectedVersion), input.ExpectedVersion, request.HttpContext.RequestAborted);
         return updated is null ? Results.Conflict(new { Error = "Store settings changed since they were loaded." }) : Results.Ok(updated);
+    });
+
+app.MapPut("/api/v1/tenants/{tenantId}/stores/{storeId}/feature-flags/{key}",
+    async (string tenantId, string storeId, string key, HttpRequest request, IIdentityAuditEmitter auditEmitter, IIdentityRevocationStore revocations, IFeatureFlagManagementService flags, IDomainEventPublisher events) =>
+    {
+        var authorization = await AuthorizeAsync(request, new TenantStoreScope(tenantId, storeId), AuthorizationAction.ManageFeatureFlags, auditEmitter, revocations);
+        if (authorization.Result is not null) return authorization.Result;
+        var input = await request.ReadFromJsonAsync<FeatureFlagChangeRequest>(request.HttpContext.RequestAborted);
+        if (input is null || !string.Equals(input.Draft.Key, key, StringComparison.Ordinal) || string.IsNullOrWhiteSpace(input.ChangeId))
+        {
+            return Results.BadRequest(new { Error = "A matching flag key, draft, and change ID are required." });
+        }
+        try
+        {
+            var result = await flags.UpsertAsync(new FeatureFlagChangeCommand(tenantId, storeId, input.Draft, input.ExpectedVersion, input.ChangeId, authorization.Token!.SubjectId, CorrelationId(request)), request.HttpContext.RequestAborted);
+            await events.PublishAsync("FeatureFlagChanged.v1", result.Event, request.HttpContext.RequestAborted);
+            return Results.Ok(new { result.Flag, Approved = false, Event = result.Event });
+        }
+        catch (InvalidOperationException ex)
+        {
+            return Results.Conflict(new { Error = ex.Message });
+        }
+        catch (ArgumentException ex)
+        {
+            return Results.BadRequest(new { Error = ex.Message });
+        }
+    });
+
+app.MapPost("/api/v1/tenants/{tenantId}/stores/{storeId}/feature-flags/{key}/approve",
+    async (string tenantId, string storeId, string key, HttpRequest request, IIdentityAuditEmitter auditEmitter, IIdentityRevocationStore revocations, IFeatureFlagManagementService flags, IDomainEventPublisher events) =>
+    {
+        var authorization = await AuthorizeAsync(request, new TenantStoreScope(tenantId, storeId), AuthorizationAction.ApproveFeatureFlags, auditEmitter, revocations);
+        if (authorization.Result is not null) return authorization.Result;
+        var input = await request.ReadFromJsonAsync<FeatureFlagApprovalRequest>(request.HttpContext.RequestAborted);
+        if (input is null || input.ExpectedVersion <= 0 || string.IsNullOrWhiteSpace(input.ApprovalId)) return Results.BadRequest(new { Error = "Positive ExpectedVersion and ApprovalId are required." });
+        try
+        {
+            var result = await flags.ApproveAsync(new FeatureFlagApprovalCommand(tenantId, storeId, key, input.ExpectedVersion, input.ApprovalId, authorization.Token!.SubjectId, CorrelationId(request)), request.HttpContext.RequestAborted);
+            await events.PublishAsync("FeatureFlagApproved.v1", result.Event, request.HttpContext.RequestAborted);
+            return Results.Ok(new { result.Flag, Approved = true, Event = result.Event });
+        }
+        catch (InvalidOperationException ex)
+        {
+            return Results.Conflict(new { Error = ex.Message });
+        }
+    });
+
+app.MapPost("/api/v1/tenants/{tenantId}/stores/{storeId}/feature-flags/{key}/rollback",
+    async (string tenantId, string storeId, string key, HttpRequest request, IIdentityAuditEmitter auditEmitter, IIdentityRevocationStore revocations, IFeatureFlagManagementService flags, IDomainEventPublisher events) =>
+    {
+        var authorization = await AuthorizeAsync(request, new TenantStoreScope(tenantId, storeId), AuthorizationAction.RollbackFeatureFlags, auditEmitter, revocations);
+        if (authorization.Result is not null) return authorization.Result;
+        var input = await request.ReadFromJsonAsync<FeatureFlagRollbackRequest>(request.HttpContext.RequestAborted);
+        if (input is null || input.ExpectedVersion <= 0 || string.IsNullOrWhiteSpace(input.RollbackId)) return Results.BadRequest(new { Error = "Positive ExpectedVersion and RollbackId are required." });
+        try
+        {
+            var result = await flags.RollbackAsync(new FeatureFlagRollbackCommand(tenantId, storeId, key, input.ExpectedVersion, input.RollbackId, authorization.Token!.SubjectId, CorrelationId(request)), request.HttpContext.RequestAborted);
+            await events.PublishAsync("FeatureFlagChanged.v1", result.Event, request.HttpContext.RequestAborted);
+            return Results.Ok(new { result.Flag, Approved = true, Event = result.Event });
+        }
+        catch (InvalidOperationException ex)
+        {
+            return Results.Conflict(new { Error = ex.Message });
+        }
+    });
+
+app.MapGet("/api/v1/tenants/{tenantId}/stores/{storeId}/feature-flags/{key}/evaluate",
+    async (string tenantId, string storeId, string key, string? environment, string? terminalId, HttpRequest request, IIdentityAuditEmitter auditEmitter, IIdentityRevocationStore revocations, IFeatureFlagManagementService flags) =>
+    {
+        var authorization = await AuthorizeAsync(request, new TenantStoreScope(tenantId, storeId), AuthorizationAction.ViewFeatureFlags, auditEmitter, revocations);
+        if (authorization.Result is not null) return authorization.Result;
+        if (string.IsNullOrWhiteSpace(environment)) return Results.BadRequest(new { Error = "Environment is required." });
+        var token = authorization.Token!;
+        var result = await flags.EvaluateAsync(tenantId, storeId, key, new FeatureFlagContext(environment, tenantId, storeId, terminalId, token.SubjectId, token.Roles), request.HttpContext.RequestAborted);
+        return Results.Ok(result);
+    });
+
+app.MapGet("/api/v1/tenants/{tenantId}/stores/{storeId}/feature-flags/{key}/audit",
+    async (string tenantId, string storeId, string key, HttpRequest request, IIdentityAuditEmitter auditEmitter, IIdentityRevocationStore revocations, IFeatureFlagManagementService flags) =>
+    {
+        var authorization = await AuthorizeAsync(request, new TenantStoreScope(tenantId, storeId), AuthorizationAction.ViewFeatureFlags, auditEmitter, revocations);
+        if (authorization.Result is not null) return authorization.Result;
+        return Results.Ok(await flags.GetAuditAsync(tenantId, storeId, key, request.HttpContext.RequestAborted));
+    });
+
+app.MapPost("/api/v1/tenants/{tenantId}/stores/{storeId}/feature-flag-snapshots",
+    async (string tenantId, string storeId, HttpRequest request, IIdentityAuditEmitter auditEmitter, IIdentityRevocationStore revocations, IFeatureFlagManagementService flags, IDomainEventPublisher events) =>
+    {
+        var authorization = await AuthorizeAsync(request, new TenantStoreScope(tenantId, storeId), AuthorizationAction.ManageFeatureFlags, auditEmitter, revocations);
+        if (authorization.Result is not null) return authorization.Result;
+        var result = await flags.PublishSnapshotAsync(tenantId, storeId, CorrelationId(request), request.HttpContext.RequestAborted);
+        await events.PublishAsync("FeatureFlagSnapshotPublished.v1", result.Event, request.HttpContext.RequestAborted);
+        return Results.Ok(result.Snapshot);
     });
 
 app.MapPost("/api/v1/tenants/{tenantId}/stores/{storeId}/insights",
@@ -908,5 +1005,8 @@ record AnalyticsSeedSaleRequest(string TenantId, string StoreId, string EventId,
 record AnalyticsSeedMovement(string ProductId, int QuantityDelta);
 record AnalyticsReplayRequest(string EventId, string SaleId, string Currency, long TotalMinor, DateTimeOffset OccurredAt, IReadOnlyList<AnalyticsSeedMovement> InventoryMovements);
 record StoreSettingsRequest(string DisplayName, string TimeZone, string Currency, bool InventoryAdjustmentsEnabled, int ExpectedVersion);
+record FeatureFlagChangeRequest(FeatureFlagDraft Draft, long ExpectedVersion, string ChangeId);
+record FeatureFlagApprovalRequest(long ExpectedVersion, string ApprovalId);
+record FeatureFlagRollbackRequest(long ExpectedVersion, string RollbackId);
 record InsightRequestBody(string InsightType, string RequestId, string SourceVersion);
 record PushSubscriptionRequest(string Endpoint, string P256dh, string Auth);

@@ -11,12 +11,17 @@ if (Uri.TryCreate(keyVaultUri, UriKind.Absolute, out var keyVaultEndpoint))
 var databasePath = builder.Configuration["RetailPulse:EdgeDatabasePath"] ?? Path.Combine(AppContext.BaseDirectory, "retailpulse-edge.db");
 var sqliteCheckoutPersistence = new SqliteCheckoutPersistence(databasePath);
 var paymentProvider = builder.Configuration["Payment:Provider"] ?? "Sandbox";
+var featureFlagSigningKey = builder.Configuration["FeatureFlags:SnapshotSigningKey"] ?? Convert.ToBase64String(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32));
 builder.Services.AddSingleton<ILocalCheckoutPersistence>(sqliteCheckoutPersistence);
 builder.Services.AddSingleton<IOutboxPersistence>(sqliteCheckoutPersistence);
 builder.Services.AddSingleton(sqliteCheckoutPersistence);
 builder.Services.AddSingleton(_ => new BoundedAuthorizationSessionCache(TimeSpan.FromMinutes(15)));
 builder.Services.AddSingleton<IIdentityAuditEmitter, NoOpIdentityAuditEmitter>();
 builder.Services.AddSingleton<IIdentityRevocationStore, InMemoryIdentityRevocationStore>();
+builder.Services.AddSingleton(new HmacFeatureFlagSnapshotSigner(System.Text.Encoding.UTF8.GetBytes(featureFlagSigningKey)));
+builder.Services.AddSingleton<FeatureFlagEvaluator>();
+builder.Services.AddSingleton<IFeatureFlagSnapshotStore>(_ => new SqliteFeatureFlagSnapshotStore(databasePath));
+builder.Services.AddSingleton<IFeatureFlagProvider, OfflineFeatureFlagProvider>();
 builder.Services.AddHttpClient();
 builder.Services.AddSingleton<IPaymentProvider>(services =>
 	paymentProvider.Equals("Stripe", StringComparison.OrdinalIgnoreCase)
@@ -99,6 +104,31 @@ app.MapPost("/api/v1/edge/tenants/{tenantId}/stores/{storeId}/payments/authorize
 		if (string.IsNullOrWhiteSpace(commandId)) return Results.BadRequest(new { Error = "X-RetailPulse-Command-Id is required." });
 		var result = await payments.AuthorizeAsync(new PaymentAuthorizationCommand(tenantId, storeId, input.TerminalId, input.LocalTransactionId, new Money(input.AmountMinor, input.Currency), CorrelationId(request), commandId), request.HttpContext.RequestAborted);
 		return Results.Ok(new { Status = result.Result.Status.ToString(), result.Result.ProviderTransactionReference, Event = result.Event });
+	});
+
+app.MapPut("/api/v1/edge/tenants/{tenantId}/stores/{storeId}/feature-flag-snapshot",
+	async (string tenantId, string storeId, HttpRequest request, BoundedAuthorizationSessionCache cache, IIdentityAuditEmitter auditEmitter, IIdentityRevocationStore revocations, IFeatureFlagSnapshotStore snapshots, HmacFeatureFlagSnapshotSigner signer) =>
+	{
+		var authorization = await AuthorizeAsync(request, new TenantStoreScope(tenantId, storeId), AuthorizationAction.ReadStoreData, cache, auditEmitter, revocations);
+		if (authorization.Result is not null) return authorization.Result;
+		var snapshot = await request.ReadFromJsonAsync<FeatureFlagSnapshot>(request.HttpContext.RequestAborted);
+		if (snapshot is null || !signer.Verify(snapshot) || !string.Equals(snapshot.TenantId, tenantId, StringComparison.Ordinal) || !string.Equals(snapshot.StoreId, storeId, StringComparison.Ordinal))
+		{
+			return Results.BadRequest(new { Error = "A valid signed snapshot for the requested tenant and store is required." });
+		}
+		return await snapshots.PublishSnapshotAsync(snapshot, request.HttpContext.RequestAborted)
+			? Results.Ok(new { snapshot.Version })
+			: Results.Conflict(new { Error = "Snapshot version is stale." });
+	});
+
+app.MapGet("/api/v1/edge/tenants/{tenantId}/stores/{storeId}/feature-flags/{key}/evaluate",
+	async (string tenantId, string storeId, string key, string? environment, string? terminalId, HttpRequest request, BoundedAuthorizationSessionCache cache, IIdentityAuditEmitter auditEmitter, IIdentityRevocationStore revocations, IFeatureFlagProvider flags) =>
+	{
+		var authorization = await AuthorizeAsync(request, new TenantStoreScope(tenantId, storeId), AuthorizationAction.ReadStoreData, cache, auditEmitter, revocations);
+		if (authorization.Result is not null) return authorization.Result;
+		if (string.IsNullOrWhiteSpace(environment)) return Results.BadRequest(new { Error = "Environment is required." });
+		var token = authorization.Token!;
+		return Results.Ok(await flags.EvaluateAsync(key, new FeatureFlagContext(environment, tenantId, storeId, terminalId, token.SubjectId, token.Roles), request.HttpContext.RequestAborted));
 	});
 
 app.MapPost("/api/v1/edge/tenants/{tenantId}/stores/{storeId}/inventory/adjust",

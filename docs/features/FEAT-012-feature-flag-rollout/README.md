@@ -4,6 +4,10 @@
 
 As a release owner, I want to enable features by store or environment so that a deployment can be tested gradually and rolled back quickly.
 
+## Status
+
+Provider-neutral rollout controls and signed SQLite-backed edge snapshots are implemented and validated. Azure App Configuration persistence, production audit retention, and rollout rehearsal remain pending.
+
 ## Scope
 
 - Azure App Configuration Feature Management behind an internal abstraction.

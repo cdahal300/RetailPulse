@@ -75,6 +75,7 @@ builder.Services.AddSingleton<IAnalyticsFactStore>(_ => useSqliteCloudLedger || 
     ? new InMemoryAnalyticsFactStore()
     : new PostgresAnalyticsFactStore(postgresConnectionString));
 builder.Services.AddSingleton<AnalyticsEventIngestor>();
+builder.Services.AddSingleton<AnalyticsReplayService>();
 builder.Services.AddSingleton<IInsightsService, InMemoryInsightsService>();
 builder.Services.AddSingleton<IPushSubscriptionStore>(_ => new PostgresPushSubscriptionStore(useSqliteCloudLedger ? null : postgresConnectionString));
 builder.Services.AddSingleton<IPushNotificationSender>(_ =>
@@ -203,6 +204,37 @@ app.MapPost("/api/v1/dev/analytics/seed-sale",
             "dev-seed-reference",
             input.InventoryMovements.Select(movement => new InventoryMovement(movement.ProductId, movement.QuantityDelta)).ToArray()), request.HttpContext.RequestAborted);
         return Results.Accepted(value: new { input.EventId, accepted, source = "dev-seed" });
+    });
+
+app.MapPost("/api/v1/tenants/{tenantId}/stores/{storeId}/analytics/reprocess",
+    async (string tenantId, string storeId, HttpRequest request, IIdentityAuditEmitter auditEmitter, IIdentityRevocationStore revocations, AnalyticsReplayService replay) =>
+    {
+        var authorization = await AuthorizeAsync(request, new TenantStoreScope(tenantId, storeId), AuthorizationAction.ReprocessAnalytics, auditEmitter, revocations);
+        if (authorization.Result is not null) return authorization.Result;
+        var commandId = ReadHeader(request, "X-RetailPulse-Command-Id");
+        if (string.IsNullOrWhiteSpace(commandId)) return Results.BadRequest(new { Error = "X-RetailPulse-Command-Id is required." });
+        var input = await request.ReadFromJsonAsync<AnalyticsReplayRequest>(request.HttpContext.RequestAborted);
+        if (input is null || string.IsNullOrWhiteSpace(input.EventId) || string.IsNullOrWhiteSpace(input.SaleId) || input.Currency.Length != 3)
+        {
+            return Results.BadRequest(new { Error = "EventId, SaleId, and a three-letter Currency are required." });
+        }
+
+        var result = await replay.ReplayAsync(commandId, new SaleCompletedEvent(
+            input.EventId,
+            input.SaleId,
+            tenantId,
+            storeId,
+            input.OccurredAt,
+            1,
+            CorrelationId(request),
+            "analytics-replay",
+            input.SaleId,
+            input.SaleId,
+            input.Currency,
+            input.TotalMinor,
+            "replay-reference",
+            input.InventoryMovements.Select(movement => new InventoryMovement(movement.ProductId, movement.QuantityDelta)).ToArray()), request.HttpContext.RequestAborted);
+        return Results.Ok(result);
     });
 
 app.MapGet("/api/v1/tenants/{tenantId}/stores/{storeId}/alerts",
@@ -874,6 +906,7 @@ record InventoryAdjustmentRequest(string ProductId, int QuantityDelta, string Re
 record NotificationPreferencesRequest(bool LowStockEnabled, bool SyncFailureEnabled);
 record AnalyticsSeedSaleRequest(string TenantId, string StoreId, string EventId, string SaleId, string Currency, long TotalMinor, DateTimeOffset? OccurredAt, string? CorrelationId, IReadOnlyList<AnalyticsSeedMovement> InventoryMovements);
 record AnalyticsSeedMovement(string ProductId, int QuantityDelta);
+record AnalyticsReplayRequest(string EventId, string SaleId, string Currency, long TotalMinor, DateTimeOffset OccurredAt, IReadOnlyList<AnalyticsSeedMovement> InventoryMovements);
 record StoreSettingsRequest(string DisplayName, string TimeZone, string Currency, bool InventoryAdjustmentsEnabled, int ExpectedVersion);
 record InsightRequestBody(string InsightType, string RequestId, string SourceVersion);
 record PushSubscriptionRequest(string Endpoint, string P256dh, string Auth);

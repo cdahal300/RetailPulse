@@ -259,6 +259,7 @@ jobs:
           SERVICE_BUS_NAMESPACE: ${{ vars.SERVICE_BUS_FULLY_QUALIFIED_NAMESPACE }}
           PUSH_VAPID_PUBLIC_KEY: ${{ vars.PUSH_VAPID_PUBLIC_KEY }}
           KEY_VAULT_URI: ${{ vars.KEY_VAULT_URI }}
+          AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
         run: |
           set -euo pipefail
           work_dir="$RUNNER_TEMP/kubernetes"
@@ -283,8 +284,12 @@ jobs:
           EOF
           kubectl kustomize "$work_dir/overlays/${OVERLAY}" > "$rendered"
           kubectl apply -f "$rendered"
+          kubectl annotate serviceaccount retailpulse-app -n retailpulse \
+            azure.workload.identity/client-id="$AZURE_CLIENT_ID" \
+            --overwrite
           kubectl patch configmap retailpulse-config -n retailpulse --type merge -p "$(jq -n --arg serviceBus "$SERVICE_BUS_NAMESPACE" --arg vapid "$PUSH_VAPID_PUBLIC_KEY" --arg keyVault "$KEY_VAULT_URI" '{data:{ServiceBus__FullyQualifiedNamespace:$serviceBus,Push__VapidPublicKey:$vapid,AzureKeyVault__VaultUri:$keyVault}}')"
           kubectl rollout restart deployment/cloud-api -n retailpulse
+          kubectl rollout restart deployment/edge-api -n retailpulse
           kubectl annotate deployment/cloud-api -n retailpulse \
             retailpulse.com/commit-sha="${GITHUB_SHA}" \
             retailpulse.com/image-digest="${{ needs.build.outputs.cloud_digest }}" \

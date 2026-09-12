@@ -881,6 +881,16 @@ select {
 	font-size: 12px;
 }
 
+.priority-item,
+.priority-empty {
+	grid-template-columns: 28px minmax(0, 1fr) auto;
+}
+
+.priority-item > span:nth-child(2),
+.priority-empty > span:nth-child(2) {
+	min-width: 0;
+}
+
 @media (max-width: 900px) {
 	.priority-layout {
 		grid-template-columns: 1fr;

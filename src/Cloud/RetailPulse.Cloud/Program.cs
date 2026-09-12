@@ -45,6 +45,7 @@ var useSqliteCloudLedger = builder.Configuration.GetValue<bool>("RetailPulse:Use
 var pushVapidPublicKey = builder.Configuration["Push:VapidPublicKey"];
 var pushVapidPrivateKey = builder.Configuration["Push:VapidPrivateKey"];
 var serviceBusNamespace = builder.Configuration["ServiceBus:FullyQualifiedNamespace"];
+var useEventAnalytics = builder.Configuration.GetValue<bool>("Analytics:UseEventFacts");
 builder.Services.AddSingleton<IPushNotificationQueue, PushNotificationQueue>();
 builder.Services.AddSingleton<IIdentityAuditEmitter>(_ => useSqliteCloudLedger || string.IsNullOrWhiteSpace(postgresConnectionString)
     ? new NoOpIdentityAuditEmitter()
@@ -57,7 +58,7 @@ builder.Services.AddSingleton<IIdentityRevocationStore>(_ => useSqliteCloudLedge
     : new PostgresIdentityRevocationStore(postgresConnectionString));
 builder.Services.AddSingleton<IDomainEventPublisher>(services => string.IsNullOrWhiteSpace(serviceBusNamespace)
     ? new NoOpDomainEventPublisher()
-    : new ServiceBusDomainEventPublisher(serviceBusNamespace, services.GetRequiredService<IPushNotificationQueue>()));
+    : new ServiceBusDomainEventPublisher(serviceBusNamespace, services.GetRequiredService<IPushNotificationQueue>(), services.GetRequiredService<AnalyticsEventIngestor>()));
 builder.Services.AddSingleton<ICatalogRepository, CloudCatalogRepository>();
 builder.Services.AddSingleton<IInventoryLedgerRepository>(_ => useSqliteCloudLedger || string.IsNullOrWhiteSpace(postgresConnectionString)
     ? new SqliteInventoryLedger(cloudDatabasePath)
@@ -70,6 +71,11 @@ builder.Services.AddSingleton<IInventoryCommandService>(services => new InMemory
 builder.Services.AddSingleton<ISyncHealthReader>(_ => new PostgresSyncHealthReader(useSqliteCloudLedger ? null : postgresConnectionString));
 builder.Services.AddSingleton<IAlertsReader>(_ => new PostgresAlertsReader(useSqliteCloudLedger ? null : postgresConnectionString));
 builder.Services.AddSingleton<IStoreSettingsRepository>(_ => new PostgresStoreSettingsRepository(useSqliteCloudLedger ? null : postgresConnectionString));
+builder.Services.AddSingleton<IAnalyticsFactStore>(_ => useSqliteCloudLedger || string.IsNullOrWhiteSpace(postgresConnectionString)
+    ? new InMemoryAnalyticsFactStore()
+    : new PostgresAnalyticsFactStore(postgresConnectionString));
+builder.Services.AddSingleton<AnalyticsEventIngestor>();
+builder.Services.AddSingleton<AnalyticsReplayService>();
 builder.Services.AddSingleton<IInsightsService, InMemoryInsightsService>();
 builder.Services.AddSingleton<IPushSubscriptionStore>(_ => new PostgresPushSubscriptionStore(useSqliteCloudLedger ? null : postgresConnectionString));
 builder.Services.AddSingleton<IPushNotificationSender>(_ =>
@@ -77,7 +83,9 @@ builder.Services.AddSingleton<IPushNotificationSender>(_ =>
         ? new NoOpPushNotificationSender()
         : new VapidPushNotificationSender(pushVapidPublicKey, pushVapidPrivateKey));
     builder.Services.AddHostedService<PushNotificationWorker>();
-builder.Services.AddSingleton<IAnalyticsReportProvider, SimulatedAnalyticsReportProvider>();
+builder.Services.AddSingleton<IAnalyticsReportProvider>(services => useEventAnalytics
+    ? new EventAnalyticsReportProvider(services.GetRequiredService<IAnalyticsFactStore>())
+    : new SimulatedAnalyticsReportProvider());
 
 var app = builder.Build();
 if (!useSqliteCloudLedger && !string.IsNullOrWhiteSpace(postgresConnectionString))
@@ -166,6 +174,67 @@ app.MapGet("/api/v1/tenants/{tenantId}/stores/{storeId}/sync-health",
         }
 
         return Results.Ok(await healthReader.GetAsync(new TenantStoreScope(tenantId, storeId), request.HttpContext.RequestAborted));
+    });
+
+app.MapPost("/api/v1/dev/analytics/seed-sale",
+    async (HttpRequest request, IIdentityAuditEmitter auditEmitter, IIdentityRevocationStore revocations, AnalyticsEventIngestor ingestor) =>
+    {
+        if (!app.Environment.IsDevelopment()) return Results.NotFound();
+        var input = await request.ReadFromJsonAsync<AnalyticsSeedSaleRequest>(request.HttpContext.RequestAborted);
+        if (input is null || string.IsNullOrWhiteSpace(input.TenantId) || string.IsNullOrWhiteSpace(input.StoreId) || string.IsNullOrWhiteSpace(input.EventId))
+        {
+            return Results.BadRequest(new { Error = "TenantId, StoreId, and EventId are required." });
+        }
+
+        var authorization = await AuthorizeAsync(request, new TenantStoreScope(input.TenantId, input.StoreId), AuthorizationAction.ViewReports, auditEmitter, revocations);
+        if (authorization.Result is not null) return authorization.Result;
+        var accepted = await ingestor.IngestAsync(new SaleCompletedEvent(
+            input.EventId,
+            input.SaleId,
+            input.TenantId,
+            input.StoreId,
+            input.OccurredAt ?? DateTimeOffset.UtcNow,
+            1,
+            input.CorrelationId ?? input.EventId,
+            "dev-seed",
+            input.SaleId,
+            input.SaleId,
+            input.Currency,
+            input.TotalMinor,
+            "dev-seed-reference",
+            input.InventoryMovements.Select(movement => new InventoryMovement(movement.ProductId, movement.QuantityDelta)).ToArray()), request.HttpContext.RequestAborted);
+        return Results.Accepted(value: new { input.EventId, accepted, source = "dev-seed" });
+    });
+
+app.MapPost("/api/v1/tenants/{tenantId}/stores/{storeId}/analytics/reprocess",
+    async (string tenantId, string storeId, HttpRequest request, IIdentityAuditEmitter auditEmitter, IIdentityRevocationStore revocations, AnalyticsReplayService replay) =>
+    {
+        var authorization = await AuthorizeAsync(request, new TenantStoreScope(tenantId, storeId), AuthorizationAction.ReprocessAnalytics, auditEmitter, revocations);
+        if (authorization.Result is not null) return authorization.Result;
+        var commandId = ReadHeader(request, "X-RetailPulse-Command-Id");
+        if (string.IsNullOrWhiteSpace(commandId)) return Results.BadRequest(new { Error = "X-RetailPulse-Command-Id is required." });
+        var input = await request.ReadFromJsonAsync<AnalyticsReplayRequest>(request.HttpContext.RequestAborted);
+        if (input is null || string.IsNullOrWhiteSpace(input.EventId) || string.IsNullOrWhiteSpace(input.SaleId) || input.Currency.Length != 3)
+        {
+            return Results.BadRequest(new { Error = "EventId, SaleId, and a three-letter Currency are required." });
+        }
+
+        var result = await replay.ReplayAsync(commandId, new SaleCompletedEvent(
+            input.EventId,
+            input.SaleId,
+            tenantId,
+            storeId,
+            input.OccurredAt,
+            1,
+            CorrelationId(request),
+            "analytics-replay",
+            input.SaleId,
+            input.SaleId,
+            input.Currency,
+            input.TotalMinor,
+            "replay-reference",
+            input.InventoryMovements.Select(movement => new InventoryMovement(movement.ProductId, movement.QuantityDelta)).ToArray()), request.HttpContext.RequestAborted);
+        return Results.Ok(result);
     });
 
 app.MapGet("/api/v1/tenants/{tenantId}/stores/{storeId}/alerts",
@@ -835,6 +904,9 @@ static bool TryParseRoles(string rolesRaw, out IReadOnlyCollection<IdentityRole>
 
 record InventoryAdjustmentRequest(string ProductId, int QuantityDelta, string Reason, string CommandId, int ExpectedVersion);
 record NotificationPreferencesRequest(bool LowStockEnabled, bool SyncFailureEnabled);
+record AnalyticsSeedSaleRequest(string TenantId, string StoreId, string EventId, string SaleId, string Currency, long TotalMinor, DateTimeOffset? OccurredAt, string? CorrelationId, IReadOnlyList<AnalyticsSeedMovement> InventoryMovements);
+record AnalyticsSeedMovement(string ProductId, int QuantityDelta);
+record AnalyticsReplayRequest(string EventId, string SaleId, string Currency, long TotalMinor, DateTimeOffset OccurredAt, IReadOnlyList<AnalyticsSeedMovement> InventoryMovements);
 record StoreSettingsRequest(string DisplayName, string TimeZone, string Currency, bool InventoryAdjustmentsEnabled, int ExpectedVersion);
 record InsightRequestBody(string InsightType, string RequestId, string SourceVersion);
 record PushSubscriptionRequest(string Endpoint, string P256dh, string Auth);

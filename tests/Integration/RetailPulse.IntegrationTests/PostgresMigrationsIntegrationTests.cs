@@ -32,7 +32,7 @@ public sealed class PostgresMigrationsIntegrationTests
             command.CommandText = "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'public' AND table_name IN ('inventory_movements', 'sync_delivery_status', 'identity_audit_events', 'identity_devices', 'push_subscriptions', 'store_settings');";
             Assert.Equal(6L, await command.ExecuteScalarAsync());
             command.CommandText = "SELECT COUNT(*) FROM pg_policies WHERE schemaname = 'public' AND policyname = 'tenant_store_scope';";
-            Assert.Equal(11L, await command.ExecuteScalarAsync());
+            Assert.Equal(12L, await command.ExecuteScalarAsync());
         }
         finally
         {

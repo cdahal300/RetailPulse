@@ -2,7 +2,7 @@
 
 ## Status
 
-In progress. The first MVP slice provides simulated, deterministic sales analytics through the Cloud API so FEAT-009 can build against stable report contracts before the real ADLS/event-ingestion pipeline is implemented.
+Event-backed dev slice complete; production analytics hardening remains. The Cloud API now supports versioned sale-event ingestion, source-event deduplication, tenant/store-scoped PostgreSQL facts, event-backed hourly sales aggregation, and a dev-only seed path. ADLS ingestion, replay/correction workflows, and production-scale quality controls remain pending.
 
 ## Outcome
 
@@ -23,6 +23,14 @@ As an owner or manager, I want trustworthy sales and inventory reports so that I
 - Simulated facts are deterministic, duplicate-aware, tenant/store filtered, and exclude raw payment/card data.
 - `scripts/generate-analytics-traffic.sh` can repeatedly call the report endpoint against a local port-forward or deployed API base URL.
 - Real ingestion from versioned events remains the next analytics hardening step and should plug into the `IAnalyticsReportProvider` boundary.
+
+## Verified Event-Backed Dev Slice
+
+- `SaleCompletedEvent.v1` maps to idempotent analytics sales facts.
+- PostgreSQL migration v4 creates the facts table, scope index, and tenant/store RLS policy.
+- Dev `Analytics__UseEventFacts=true` selects the event-backed provider.
+- Authenticated development seed requests produced `event-facts` reports with complete freshness metadata in the PWA.
+- Production ADLS/stream ingestion and operator-facing replay authorization remain pending; deterministic fact correction is implemented and tested.
 
 ## Acceptance criteria
 

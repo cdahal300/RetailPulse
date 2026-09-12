@@ -2,6 +2,8 @@
 
 ## Functional behavior
 
+Current status: the versioned sale-event ingestion, duplicate-safe fact persistence, tenant/store-scoped report aggregation, deterministic fact correction, owner-authorized replay command, and dev UI verification are complete. Durable replay job storage, ADLS ingestion, and production reconciliation remain pending.
+
 - Given versioned sales, inventory, refund, and sync events, when ingestion completes, then curated facts and hourly/daily aggregates are available with source references and freshness.
 - Given an authorized owner or manager query, when a report runs, then totals are filtered by tenant/store and timezone/currency rules and reconcile within the documented timing window.
 - Given a late, corrected, or reprocessed event, when the pipeline reruns, then facts and aggregates converge deterministically without double counting.

@@ -28,6 +28,30 @@ public class AnalyticsFactIngestionTests
         Assert.Equal(3, fact.UnitsSold);
     }
 
+    [Fact]
+    public async Task Event_report_provider_aggregates_ingested_facts_with_freshness_metadata()
+    {
+        var store = new InMemoryAnalyticsFactStore();
+        var ingestor = new AnalyticsEventIngestor(store);
+        await ingestor.IngestAsync(CreateSaleEvent("event-1", "tenant-1", "store-1"));
+        var provider = new EventAnalyticsReportProvider(store);
+
+        var report = await provider.GetSalesReportAsync(new AnalyticsReportRequest(
+            "tenant-1",
+            "store-1",
+            DateTimeOffset.Parse("2026-08-23T00:00:00Z"),
+            DateTimeOffset.Parse("2026-08-24T00:00:00Z"),
+            "UTC",
+            "USD"));
+
+        Assert.Equal(2500, report.Summary.NetSalesMinor);
+        Assert.Equal(1, report.Summary.OrderCount);
+        Assert.Equal(3, report.Summary.UnitsSold);
+        Assert.Equal("event-facts", report.Summary.Freshness.DataSource);
+        Assert.Equal("complete", report.Summary.Freshness.Status);
+        Assert.Single(report.HourlySales);
+    }
+
     private static SaleCompletedEvent CreateSaleEvent(string eventId, string tenantId, string storeId) => new(
         eventId,
         "sale-aggregate",

@@ -13,8 +13,11 @@ if (Uri.TryCreate(keyVaultUri, UriKind.Absolute, out var keyVaultEndpoint))
 var entraTenantId = builder.Configuration["Entra:TenantId"];
 var entraAudience = builder.Configuration["Entra:Audience"];
 var entraConfigured = !string.IsNullOrWhiteSpace(entraTenantId) && !string.IsNullOrWhiteSpace(entraAudience);
+var defaultAllowedOrigins = builder.Environment.IsDevelopment()
+    ? ["http://localhost:5173", "http://localhost:5174", "http://127.0.0.1:5173", "http://localhost:3000"]
+    : Array.Empty<string>();
 var portalAllowedOrigins = builder.Configuration["Portal:AllowedOrigins"]?
-    .Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries) ?? [];
+    .Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries) ?? defaultAllowedOrigins;
 
 if (entraConfigured)
 {
@@ -33,10 +36,17 @@ if (entraConfigured)
 
 if (portalAllowedOrigins.Length > 0)
 {
-    builder.Services.AddCors(options => options.AddPolicy("Portal", policy =>
-        policy.WithOrigins(portalAllowedOrigins)
-            .AllowAnyHeader()
-            .AllowAnyMethod()));
+    builder.Services.AddCors(options =>
+    {
+        options.AddPolicy("Portal", policy =>
+            policy.WithOrigins(portalAllowedOrigins)
+                .AllowAnyHeader()
+                .AllowAnyMethod());
+        options.AddDefaultPolicy(policy =>
+            policy.WithOrigins(portalAllowedOrigins)
+                .AllowAnyHeader()
+                .AllowAnyMethod());
+    });
 }
 
 var cloudDatabasePath = builder.Configuration["RetailPulse:CloudDatabasePath"] ?? Path.Combine(AppContext.BaseDirectory, "retailpulse-cloud.db");
@@ -77,7 +87,23 @@ builder.Services.AddSingleton<IAnalyticsFactStore>(_ => useSqliteCloudLedger || 
     : new PostgresAnalyticsFactStore(postgresConnectionString));
 builder.Services.AddSingleton<AnalyticsEventIngestor>();
 builder.Services.AddSingleton<AnalyticsReplayService>();
-builder.Services.AddSingleton<IInsightsService, InMemoryInsightsService>();
+builder.Services.AddSingleton<IInsightProvider>(services =>
+{
+    var config = services.GetRequiredService<IConfiguration>();
+    var endpoint = config["AzureOpenAI:Endpoint"];
+    var apiKey = config["AzureOpenAI:ApiKey"];
+    var deployment = config["AzureOpenAI:Deployment"];
+    if (!string.IsNullOrWhiteSpace(endpoint) && !string.IsNullOrWhiteSpace(apiKey) && !string.IsNullOrWhiteSpace(deployment))
+    {
+        return new AzureOpenAIInsightProvider(config);
+    }
+    return new DeterministicInsightProvider();
+});
+builder.Services.AddSingleton<IInsightsService>(services =>
+    new InMemoryInsightsService(
+        services.GetRequiredService<IAnalyticsReportProvider>(),
+        services.GetRequiredService<IInsightProvider>(),
+        services.GetRequiredService<IConfiguration>()["AzureOpenAI:Deployment"]));
 builder.Services.AddSingleton<IPushSubscriptionStore>(_ => new PostgresPushSubscriptionStore(useSqliteCloudLedger ? null : postgresConnectionString));
 builder.Services.AddSingleton(new HmacFeatureFlagSnapshotSigner(Encoding.UTF8.GetBytes(featureFlagSigningKey)));
 builder.Services.AddSingleton<FeatureFlagEvaluator>();
@@ -96,18 +122,21 @@ if (!useSqliteCloudLedger && !string.IsNullOrWhiteSpace(postgresConnectionString
 {
     await PostgresMigrations.ApplyAsync(postgresConnectionString);
 }
+if (portalAllowedOrigins.Length > 0)
+{
+    app.UseCors();
+}
+
 if (entraConfigured)
 {
     app.UseAuthentication();
     app.UseAuthorization();
 }
 
-if (portalAllowedOrigins.Length > 0)
+if (!app.Environment.IsDevelopment())
 {
-    app.UseCors("Portal");
+    app.UseHttpsRedirection();
 }
-
-app.UseHttpsRedirection();
 
 // Health check endpoints for Kubernetes readiness and liveness probes
 app.MapGet("/health/live", () => Results.Ok(new { status = "alive", timestamp = DateTimeOffset.UtcNow }))
@@ -390,6 +419,15 @@ app.MapGet("/api/v1/tenants/{tenantId}/stores/{storeId}/insights/{insightId}",
         var authorization = await AuthorizeAsync(request, new TenantStoreScope(tenantId, storeId), AuthorizationAction.ViewInsights, auditEmitter, revocations);
         if (authorization.Result is not null) return authorization.Result;
         var result = await insights.GetAsync(new TenantStoreScope(tenantId, storeId), insightId, request.HttpContext.RequestAborted);
+        return result is null ? Results.NotFound() : Results.Ok(result);
+    });
+
+app.MapGet("/api/v1/tenants/{tenantId}/stores/{storeId}/insights/jobs/{requestId}",
+    async (string tenantId, string storeId, string requestId, [AsParameters] InsightJobQuery query, HttpRequest request, IIdentityAuditEmitter auditEmitter, IIdentityRevocationStore revocations, IInsightsService insights) =>
+    {
+        var authorization = await AuthorizeAsync(request, new TenantStoreScope(tenantId, storeId), AuthorizationAction.ViewInsights, auditEmitter, revocations);
+        if (authorization.Result is not null) return authorization.Result;
+        var result = await insights.GetJobAsync(new TenantStoreScope(tenantId, storeId), requestId, query.SourceVersion, request.HttpContext.RequestAborted);
         return result is null ? Results.NotFound() : Results.Ok(result);
     });
 
@@ -1009,4 +1047,5 @@ record FeatureFlagChangeRequest(FeatureFlagDraft Draft, long ExpectedVersion, st
 record FeatureFlagApprovalRequest(long ExpectedVersion, string ApprovalId);
 record FeatureFlagRollbackRequest(long ExpectedVersion, string RollbackId);
 record InsightRequestBody(string InsightType, string RequestId, string SourceVersion);
+record InsightJobQuery(string? SourceVersion);
 record PushSubscriptionRequest(string Endpoint, string P256dh, string Auth);

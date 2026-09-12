@@ -9,7 +9,7 @@ public sealed class PostgresMigrationsIntegrationTests
     public async Task Postgres_migrations_are_repeatable_and_create_cloud_schema()
     {
         var databaseName = $"retailpulse_test_{Guid.NewGuid():N}";
-        var postgresHost = Environment.GetEnvironmentVariable("POSTGRES_TEST_HOST") ?? "127.0.0.1";
+        var postgresHost = ResolvePostgresHost();
         var adminConnectionString = $"Host={postgresHost};Port=5432;Database=postgres;Username=retailpulse;Password=retailpulse-dev";
         await using (var admin = new NpgsqlConnection(adminConnectionString))
         {
@@ -45,6 +45,23 @@ public sealed class PostgresMigrationsIntegrationTests
             await using var drop = admin.CreateCommand();
             drop.CommandText = $"DROP DATABASE IF EXISTS \"{databaseName}\"";
             await drop.ExecuteNonQueryAsync();
+        }
+    }
+
+    private static string ResolvePostgresHost()
+    {
+        var envHost = Environment.GetEnvironmentVariable("POSTGRES_TEST_HOST");
+        if (!string.IsNullOrWhiteSpace(envHost)) return envHost;
+
+        try
+        {
+            using var socket = new System.Net.Sockets.Socket(System.Net.Sockets.AddressFamily.InterNetwork, System.Net.Sockets.SocketType.Stream, System.Net.Sockets.ProtocolType.Tcp);
+            socket.Connect("postgres", 5432);
+            return "postgres";
+        }
+        catch
+        {
+            return "127.0.0.1";
         }
     }
 }

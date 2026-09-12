@@ -227,8 +227,8 @@ function App() {
     let cancelled = false
     setInsight(null)
     setInsightError(null)
-    if (!session?.accessToken) return
-    void requestInsight(storeId, session.accessToken)
+    if (!demoMode && entraConfigured && !session) return
+    void requestInsight(storeId, session?.accessToken)
       .then((result) => {
         if (!cancelled) setInsight(result)
       })
@@ -652,10 +652,23 @@ async function fetchStoreSettings(storeId: string, accessToken: string): Promise
   return await response.json() as StoreSettings
 }
 
-async function requestInsight(storeId: string, accessToken: string): Promise<InsightResult> {
+async function requestInsight(storeId: string, accessToken?: string): Promise<InsightResult> {
+  if (!apiBaseUrl || (!demoMode && !accessToken)) throw new Error('Live identity session is not configured')
+  const headers: Record<string, string> = demoMode ? {
+    'X-RetailPulse-Token-Id': `portal-insights-${Date.now()}`,
+    'X-RetailPulse-Subject-Id': 'manager-portal',
+    'X-RetailPulse-Tenant-Id': 'tenant-1',
+    'X-RetailPulse-Store-Id': storeId,
+    'X-RetailPulse-Principal-Type': 'User',
+    'X-RetailPulse-Roles': 'Manager',
+    'X-RetailPulse-Issued-At': new Date().toISOString(),
+    'X-RetailPulse-Expires-At': new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+    'Content-Type': 'application/json'
+  } : { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' }
+
   const response = await fetch(`${apiBaseUrl.replace(/\/$/, '')}/api/v1/tenants/tenant-1/stores/${storeId}/insights`, {
     method: 'POST',
-    headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+    headers,
     body: JSON.stringify({ insightType: 'sales-summary', requestId: crypto.randomUUID(), sourceVersion: 'sales-report.v1' }),
   })
   if (!response.ok) throw new Error(`Insights API returned HTTP ${response.status}`)

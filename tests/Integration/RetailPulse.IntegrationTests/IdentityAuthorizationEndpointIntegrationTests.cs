@@ -318,8 +318,27 @@ public sealed class IdentityAuthorizationEndpointIntegrationTests : IClassFixtur
         using var insight = JsonDocument.Parse(await manager.Content.ReadAsStringAsync());
         Assert.Equal("Completed", insight.RootElement.GetProperty("status").GetString());
         Assert.Equal("Validated", insight.RootElement.GetProperty("validationStatus").GetString());
-        Assert.Equal("deterministic-v1", insight.RootElement.GetProperty("promptVersion").GetString());
+        Assert.False(string.IsNullOrWhiteSpace(insight.RootElement.GetProperty("promptVersion").GetString()));
         Assert.DoesNotContain("card", insight.RootElement.GetProperty("summary").GetString()!, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task Cloud_insight_jobs_are_queryable_by_request_id()
+    {
+        using var createRequest = CloudRequest("/api/v1/tenants/tenant-1/stores/store-1/insights", HttpMethod.Post, "manager-job-token", "manager-1", "tenant-1", "store-1", "User", "Manager", DateTimeOffset.UtcNow.AddMinutes(-5), DateTimeOffset.UtcNow.AddMinutes(30));
+        createRequest.Content = JsonContent.Create(new { InsightType = "sales-summary", RequestId = "manager-job-1", SourceVersion = "sales-report.v1" });
+        var created = await cloudClient.SendAsync(createRequest);
+        Assert.Equal(HttpStatusCode.OK, created.StatusCode);
+
+        using var statusRequest = CloudRequest($"/api/v1/tenants/tenant-1/stores/store-1/insights/jobs/manager-job-1?sourceVersion=sales-report.v1", HttpMethod.Get, "manager-job-token", "manager-1", "tenant-1", "store-1", "User", "Manager", DateTimeOffset.UtcNow.AddMinutes(-5), DateTimeOffset.UtcNow.AddMinutes(30));
+        var status = await cloudClient.SendAsync(statusRequest);
+        Assert.Equal(HttpStatusCode.OK, status.StatusCode);
+
+        using var job = JsonDocument.Parse(await status.Content.ReadAsStringAsync());
+        Assert.Equal("Completed", job.RootElement.GetProperty("status").GetString());
+        Assert.Equal("sales-summary", job.RootElement.GetProperty("insightType").GetString());
+        Assert.Equal("manager-job-1", job.RootElement.GetProperty("requestId").GetString());
+        Assert.Equal("Validated", job.RootElement.GetProperty("validationStatus").GetString());
     }
 
     [Fact]

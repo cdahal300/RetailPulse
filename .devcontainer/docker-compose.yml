@@ -5,6 +5,7 @@ services:
       dockerfile: Dockerfile
     volumes:
       - ..:/workspaces/RetailPulse-POS-MVP:cached
+      - /var/run/docker.sock:/var/run/docker.sock
     command: sleep infinity
     environment:
       ConnectionStrings__Postgres: Host=postgres;Port=5432;Database=retailpulse;Username=retailpulse;Password=retailpulse-dev

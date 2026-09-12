@@ -28,6 +28,13 @@ type StoreOption = {
   market: string
 }
 
+type DemoScenario = {
+  scenario: string
+  tenantId: string
+  role: string
+  stores: StoreOption[]
+}
+
 type SalesSummary = {
   tenantId: string
   storeId: string
@@ -124,7 +131,7 @@ type InsightResult = {
   generatedAt: string
 }
 
-const stores: StoreOption[] = [
+const fallbackStores: StoreOption[] = [
   { id: 'store-1', name: 'Bardstown Road', market: 'Louisville' },
   { id: 'store-2', name: 'South End Market', market: 'Louisville' },
 ]
@@ -136,9 +143,14 @@ const commandQueueKey = 'retailpulse.manager.commands.v1'
 const storageScopeKey = 'retailpulse.portal.storage-scope'
 const cacheMaxAgeMs = 24 * 60 * 60 * 1000
 const displayTimeZone = 'America/New_York'
+const demoScenarioKey = import.meta.env.VITE_DEMO_SCENARIO ?? 'owner-three-stores'
 
 function App() {
-  const [storeId, setStoreId] = useState(stores[0].id)
+  const [availableStores, setAvailableStores] = useState<StoreOption[]>(fallbackStores)
+  const [storeId, setStoreId] = useState(fallbackStores[0].id)
+  const [scenarioTenantId, setScenarioTenantId] = useState('tenant-1')
+  const [scenarioRole, setScenarioRole] = useState('Manager')
+  const [scenarioLoading, setScenarioLoading] = useState(demoMode && Boolean(apiBaseUrl))
   const [refreshKey, setRefreshKey] = useState(0)
   const [report, setReport] = useState<SalesReport>(() => fallbackReport(storeId))
   const [dashboardState, setDashboardState] = useState<DashboardState>('loading')
@@ -163,6 +175,28 @@ function App() {
   const [insight, setInsight] = useState<InsightResult | null>(null)
   const [insightError, setInsightError] = useState<string | null>(null)
   const [currentTime, setCurrentTime] = useState(() => new Date())
+  const tenantId = demoMode ? scenarioTenantId : session?.tenantId ?? 'tenant-1'
+
+  useEffect(() => {
+    if (!demoMode || !apiBaseUrl) {
+      setScenarioLoading(false)
+      return
+    }
+
+    void fetch(`${apiBaseUrl.replace(/\/$/, '')}/api/v1/dev/scenarios/${demoScenarioKey}`)
+      .then(async (response) => {
+        if (!response.ok) throw new Error(`Scenario manifest returned HTTP ${response.status}`)
+        return await response.json() as DemoScenario
+      })
+      .then((scenario) => {
+        setScenarioTenantId(scenario.tenantId)
+        setScenarioRole(scenario.role)
+        setAvailableStores(scenario.stores)
+        setStoreId(scenario.stores[0]?.id ?? fallbackStores[0].id)
+      })
+      .catch((error: unknown) => setAuthError(error instanceof Error ? error.message : 'Development scenario is unavailable'))
+      .finally(() => setScenarioLoading(false))
+  }, [])
 
   useEffect(() => {
     const timer = window.setInterval(() => setCurrentTime(new Date()), 1000)
@@ -187,6 +221,7 @@ function App() {
     async function loadReport() {
       setDashboardState('loading')
       setLastError(null)
+      if (scenarioLoading) return
       if (!demoMode && entraConfigured && !session) return
       const scope = getStorageScope(session)
       const cached = readCachedReport(storeId, scope)
@@ -196,7 +231,7 @@ function App() {
           throw new Error('Your Entra token does not include the required tenant and role claims for manager access.')
         }
 
-        const fresh = await fetchSalesReport(storeId, session?.accessToken)
+        const fresh = await fetchSalesReport(storeId, session?.accessToken, tenantId)
         if (cancelled) return
         setReport(fresh)
         setDashboardState('fresh')
@@ -213,16 +248,16 @@ function App() {
     return () => {
       cancelled = true
     }
-  }, [session, storeId, refreshKey])
+  }, [session, storeId, tenantId, refreshKey, scenarioLoading])
 
-  const isOwner = session?.roles.some((role) => role.toLowerCase() === 'owner') ?? false
+  const isOwner = demoMode ? scenarioRole.toLowerCase() === 'owner' : session?.roles.some((role) => role.toLowerCase() === 'owner') ?? false
 
   useEffect(() => {
     let cancelled = false
     setStoreSettings(null)
     setSettingsError(null)
-    if (!isOwner || !session?.accessToken) return
-    void fetchStoreSettings(storeId, session.accessToken)
+    if (scenarioLoading || !isOwner || !session?.accessToken) return
+    void fetchStoreSettings(storeId, session.accessToken, tenantId)
       .then((settings) => {
         if (!cancelled) setStoreSettings(settings)
       })
@@ -232,14 +267,14 @@ function App() {
     return () => {
       cancelled = true
     }
-  }, [isOwner, session, storeId, refreshKey])
+  }, [isOwner, session, storeId, tenantId, refreshKey, scenarioLoading])
 
   useEffect(() => {
     let cancelled = false
     setInsight(null)
     setInsightError(null)
-    if (!demoMode && entraConfigured && !session) return
-    void requestInsight(storeId, session?.accessToken)
+    if (scenarioLoading || (!demoMode && entraConfigured && !session)) return
+    void requestInsight(storeId, session?.accessToken, tenantId)
       .then((result) => {
         if (!cancelled) setInsight(result)
       })
@@ -249,13 +284,13 @@ function App() {
     return () => {
       cancelled = true
     }
-  }, [session, storeId, refreshKey])
+  }, [session, storeId, tenantId, refreshKey, scenarioLoading])
 
   useEffect(() => {
     let cancelled = false
     setAlertsError(null)
-    if (!demoMode && entraConfigured && !session) return
-    void Promise.all([fetchAlerts(storeId, session?.accessToken), fetchNotificationPreferences(storeId, session?.accessToken)])
+    if (scenarioLoading || (!demoMode && entraConfigured && !session)) return
+    void Promise.all([fetchAlerts(storeId, session?.accessToken, tenantId), fetchNotificationPreferences(storeId, session?.accessToken, tenantId)])
       .then(([nextAlerts, preferences]) => {
         if (!cancelled) {
           setAlerts(nextAlerts)
@@ -268,7 +303,7 @@ function App() {
     return () => {
       cancelled = true
     }
-  }, [session, storeId, refreshKey])
+  }, [session, storeId, tenantId, refreshKey, scenarioLoading])
 
   useEffect(() => {
     const flush = () => {
@@ -293,9 +328,9 @@ function App() {
     let cancelled = false
     setSyncHealth(null)
     setSyncHealthError(null)
-    if (!demoMode && entraConfigured && !session) return
+    if (scenarioLoading || (!demoMode && entraConfigured && !session)) return
 
-    void fetchSyncHealth(storeId, session?.accessToken)
+    void fetchSyncHealth(storeId, session?.accessToken, tenantId)
       .then((health) => {
         if (!cancelled) setSyncHealth(health)
       })
@@ -306,7 +341,18 @@ function App() {
     return () => {
       cancelled = true
     }
-  }, [session, storeId, refreshKey])
+  }, [session, storeId, tenantId, refreshKey, scenarioLoading])
+
+  if (scenarioLoading) {
+    return (
+      <main className="auth-gate">
+        <div className="auth-gate-mark">RP</div>
+        <p className="eyebrow">Development scenario</p>
+        <h1>Loading {demoScenarioKey}</h1>
+        <p>Resolving the seeded tenant and authorized store scope.</p>
+      </main>
+    )
+  }
 
   if (!demoMode && entraConfigured && !session) {
     return (
@@ -323,7 +369,7 @@ function App() {
     )
   }
 
-  const selectedStore = stores.find((store) => store.id === storeId) ?? stores[0]
+  const selectedStore = availableStores.find((store) => store.id === storeId) ?? availableStores[0] ?? fallbackStores[0]
   const maxHourlySales = Math.max(...report.hourlySales.map((hour) => hour.netSalesMinor), 1)
 
   return (
@@ -368,7 +414,7 @@ function App() {
             <label className="select-shell">
               <Store size={17} />
               <select value={storeId} onChange={(event) => setStoreId(event.target.value)} aria-label="Select store">
-                {stores.map((store) => (
+                {availableStores.map((store) => (
                   <option key={store.id} value={store.id}>{store.name}</option>
                 ))}
               </select>
@@ -590,7 +636,7 @@ function StatusPill({ state }: { state: DashboardState }) {
   return <strong className={`status-pill ${state}`}>{label}</strong>
 }
 
-async function fetchSalesReport(storeId: string, accessToken?: string): Promise<SalesReport> {
+async function fetchSalesReport(storeId: string, accessToken: string | undefined, tenantId: string): Promise<SalesReport> {
   if (!apiBaseUrl || (!demoMode && !accessToken)) {
     throw new Error('Live identity session is not configured')
   }
@@ -616,11 +662,11 @@ async function fetchSalesReport(storeId: string, accessToken?: string): Promise<
 
   const issuedAt = new Date().toISOString()
   const expiresAt = new Date(Date.now() + 60 * 60 * 1000).toISOString()
-  const url = `${apiBaseUrl.replace(/\/$/, '')}/api/v1/tenants/tenant-1/stores/${storeId}/reports/sales?from=2026-08-23T00:00:00Z&to=2026-08-24T00:00:00Z&timezone=UTC&currency=USD`
+  const url = `${apiBaseUrl.replace(/\/$/, '')}/api/v1/tenants/${tenantId}/stores/${storeId}/reports/sales?from=2026-08-23T00:00:00Z&to=2026-08-24T00:00:00Z&timezone=America%2FNew_York&currency=USD`
   const headers: Record<string, string> = demoMode ? {
       'X-RetailPulse-Token-Id': `portal-${storeId}-${Date.now()}`,
       'X-RetailPulse-Subject-Id': 'manager-portal',
-      'X-RetailPulse-Tenant-Id': 'tenant-1',
+      'X-RetailPulse-Tenant-Id': tenantId,
       'X-RetailPulse-Store-Id': storeId,
       'X-RetailPulse-Principal-Type': 'User',
       'X-RetailPulse-Roles': 'Manager',
@@ -637,16 +683,16 @@ async function fetchSalesReport(storeId: string, accessToken?: string): Promise<
   return await response.json() as SalesReport
 }
 
-async function fetchSyncHealth(storeId: string, accessToken?: string): Promise<SyncHealth> {
+async function fetchSyncHealth(storeId: string, accessToken: string | undefined, tenantId: string): Promise<SyncHealth> {
   if (!apiBaseUrl || (!demoMode && !accessToken)) {
     throw new Error('Live identity session is not configured')
   }
 
-  const url = `${apiBaseUrl.replace(/\/$/, '')}/api/v1/tenants/tenant-1/stores/${storeId}/sync-health`
+  const url = `${apiBaseUrl.replace(/\/$/, '')}/api/v1/tenants/${tenantId}/stores/${storeId}/sync-health`
   const headers: Record<string, string> = demoMode ? {
     'X-RetailPulse-Token-Id': `portal-sync-${storeId}-${Date.now()}`,
     'X-RetailPulse-Subject-Id': 'manager-portal',
-    'X-RetailPulse-Tenant-Id': 'tenant-1',
+    'X-RetailPulse-Tenant-Id': tenantId,
     'X-RetailPulse-Store-Id': storeId,
     'X-RetailPulse-Principal-Type': 'User',
     'X-RetailPulse-Roles': 'Manager',
@@ -658,27 +704,27 @@ async function fetchSyncHealth(storeId: string, accessToken?: string): Promise<S
   return await response.json() as SyncHealth
 }
 
-async function fetchAlerts(storeId: string, accessToken?: string): Promise<OperationalAlert[]> {
+async function fetchAlerts(storeId: string, accessToken: string | undefined, tenantId: string): Promise<OperationalAlert[]> {
   if (!apiBaseUrl || (!demoMode && !accessToken)) throw new Error('Live identity session is not configured')
   const headers: Record<string, string> = demoMode ? {
     'X-RetailPulse-Token-Id': `portal-alerts-${Date.now()}`,
     'X-RetailPulse-Subject-Id': 'manager-portal',
-    'X-RetailPulse-Tenant-Id': 'tenant-1',
+    'X-RetailPulse-Tenant-Id': tenantId,
     'X-RetailPulse-Store-Id': storeId,
     'X-RetailPulse-Principal-Type': 'User',
     'X-RetailPulse-Roles': 'Manager',
     'X-RetailPulse-Issued-At': new Date().toISOString(),
     'X-RetailPulse-Expires-At': new Date(Date.now() + 60 * 60 * 1000).toISOString(),
   } : { Authorization: `Bearer ${accessToken}` }
-  const response = await fetch(`${apiBaseUrl.replace(/\/$/, '')}/api/v1/tenants/tenant-1/stores/${storeId}/alerts`, { headers })
+  const response = await fetch(`${apiBaseUrl.replace(/\/$/, '')}/api/v1/tenants/${tenantId}/stores/${storeId}/alerts`, { headers })
   if (!response.ok) throw new Error(`Alerts API returned HTTP ${response.status}`)
   return await response.json() as OperationalAlert[]
 }
 
-async function fetchNotificationPreferences(storeId: string, accessToken?: string): Promise<NotificationPreferences> {
+async function fetchNotificationPreferences(storeId: string, accessToken: string | undefined, tenantId: string): Promise<NotificationPreferences> {
   if (!apiBaseUrl || (!demoMode && !accessToken)) throw new Error('Live identity session is not configured')
   if (demoMode) return { lowStockEnabled: true, syncFailureEnabled: true }
-  const response = await fetch(`${apiBaseUrl.replace(/\/$/, '')}/api/v1/tenants/tenant-1/stores/${storeId}/notification-preferences`, { headers: demoMode ? {} : { Authorization: `Bearer ${accessToken}` } })
+  const response = await fetch(`${apiBaseUrl.replace(/\/$/, '')}/api/v1/tenants/${tenantId}/stores/${storeId}/notification-preferences`, { headers: demoMode ? {} : { Authorization: `Bearer ${accessToken}` } })
   if (!response.ok) throw new Error(`Notification preferences API returned HTTP ${response.status}`)
   return await response.json() as NotificationPreferences
 }
@@ -695,18 +741,18 @@ async function saveNotificationPreferences(storeId: string, accessToken: string 
   }
 }
 
-async function fetchStoreSettings(storeId: string, accessToken: string): Promise<StoreSettings> {
-  const response = await fetch(`${apiBaseUrl.replace(/\/$/, '')}/api/v1/tenants/tenant-1/stores/${storeId}/settings`, { headers: { Authorization: `Bearer ${accessToken}` } })
+async function fetchStoreSettings(storeId: string, accessToken: string, tenantId: string): Promise<StoreSettings> {
+  const response = await fetch(`${apiBaseUrl.replace(/\/$/, '')}/api/v1/tenants/${tenantId}/stores/${storeId}/settings`, { headers: { Authorization: `Bearer ${accessToken}` } })
   if (!response.ok) throw new Error(`Store settings API returned HTTP ${response.status}`)
   return await response.json() as StoreSettings
 }
 
-async function requestInsight(storeId: string, accessToken?: string): Promise<InsightResult> {
+async function requestInsight(storeId: string, accessToken: string | undefined, tenantId: string): Promise<InsightResult> {
   if (!apiBaseUrl || (!demoMode && !accessToken)) throw new Error('Live identity session is not configured')
   const headers: Record<string, string> = demoMode ? {
     'X-RetailPulse-Token-Id': `portal-insights-${Date.now()}`,
     'X-RetailPulse-Subject-Id': 'manager-portal',
-    'X-RetailPulse-Tenant-Id': 'tenant-1',
+    'X-RetailPulse-Tenant-Id': tenantId,
     'X-RetailPulse-Store-Id': storeId,
     'X-RetailPulse-Principal-Type': 'User',
     'X-RetailPulse-Roles': 'Manager',
@@ -715,7 +761,7 @@ async function requestInsight(storeId: string, accessToken?: string): Promise<In
     'Content-Type': 'application/json'
   } : { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' }
 
-  const response = await fetch(`${apiBaseUrl.replace(/\/$/, '')}/api/v1/tenants/tenant-1/stores/${storeId}/insights`, {
+  const response = await fetch(`${apiBaseUrl.replace(/\/$/, '')}/api/v1/tenants/${tenantId}/stores/${storeId}/insights`, {
     method: 'POST',
     headers,
     body: JSON.stringify({ insightType: 'sales-summary', requestId: crypto.randomUUID(), sourceVersion: 'sales-report.v1' }),
@@ -1034,7 +1080,7 @@ function clearPortalStorage(scope: string) {
 
 function removeLegacyPortalStorage() {
   localStorage.removeItem(commandQueueKey)
-  for (const store of stores) localStorage.removeItem(`${cacheKeyPrefix}.${store.id}`)
+  for (const store of fallbackStores) localStorage.removeItem(`${cacheKeyPrefix}.${store.id}`)
 }
 
 function formatMoney(minorUnits: number, currency: string) {

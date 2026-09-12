@@ -239,6 +239,27 @@ app.MapPost("/api/v1/dev/analytics/seed-sale",
         return Results.Accepted(value: new { input.EventId, accepted, source = "dev-seed" });
     });
 
+if (app.Environment.IsDevelopment())
+{
+    app.MapGet("/api/v1/dev/scenarios/{scenario}", (string scenario) =>
+    {
+        var result = scenario.ToLowerInvariant() switch
+        {
+            "owner-three-stores" => new DevScenarioResponse("owner-three-stores", "tenant-demo-acme", "Owner", [
+                new DevScenarioStore("store-downtown", "Downtown Flagship", "Louisville"),
+                new DevScenarioStore("store-airport", "Airport Kiosk", "Louisville"),
+                new DevScenarioStore("store-mall", "Mall Counter", "Louisville")]),
+            "manager-single-store" => new DevScenarioResponse("manager-single-store", "tenant-demo-acme", "Manager", [
+                new DevScenarioStore("store-downtown", "Downtown Flagship", "Louisville")]),
+            "second-tenant" => new DevScenarioResponse("second-tenant", "tenant-demo-green", "Owner", [
+                new DevScenarioStore("store-market", "Green Market", "Lexington")]),
+            _ => null
+        };
+
+        return result is null ? Results.NotFound(new { Error = "Unknown development scenario." }) : Results.Ok(result);
+    }).AllowAnonymous();
+}
+
 app.MapPost("/api/v1/tenants/{tenantId}/stores/{storeId}/analytics/reprocess",
     async (string tenantId, string storeId, HttpRequest request, IIdentityAuditEmitter auditEmitter, IIdentityRevocationStore revocations, AnalyticsReplayService replay) =>
     {
@@ -1041,6 +1062,8 @@ record InventoryAdjustmentRequest(string ProductId, int QuantityDelta, string Re
 record NotificationPreferencesRequest(bool LowStockEnabled, bool SyncFailureEnabled);
 record AnalyticsSeedSaleRequest(string TenantId, string StoreId, string EventId, string SaleId, string Currency, long TotalMinor, DateTimeOffset? OccurredAt, string? CorrelationId, IReadOnlyList<AnalyticsSeedMovement> InventoryMovements);
 record AnalyticsSeedMovement(string ProductId, int QuantityDelta);
+record DevScenarioResponse(string Scenario, string TenantId, string Role, IReadOnlyList<DevScenarioStore> Stores);
+record DevScenarioStore(string Id, string Name, string Market);
 record AnalyticsReplayRequest(string EventId, string SaleId, string Currency, long TotalMinor, DateTimeOffset OccurredAt, IReadOnlyList<AnalyticsSeedMovement> InventoryMovements);
 record StoreSettingsRequest(string DisplayName, string TimeZone, string Currency, bool InventoryAdjustmentsEnabled, int ExpectedVersion);
 record FeatureFlagChangeRequest(FeatureFlagDraft Draft, long ExpectedVersion, string ChangeId);

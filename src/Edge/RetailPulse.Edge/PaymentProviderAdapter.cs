@@ -99,6 +99,8 @@ public sealed class StripePaymentGateway(HttpClient httpClient, string apiKey, s
             ["currency"] = currency.ToLowerInvariant(),
             ["payment_method"] = paymentMethodId,
             ["confirm"] = "true",
+            ["automatic_payment_methods[enabled]"] = "true",
+            ["automatic_payment_methods[allow_redirects]"] = "never",
             ["metadata[store_id]"] = storeId,
             ["metadata[terminal_id]"] = terminalId,
             ["metadata[local_transaction_id]"] = localTransactionId,

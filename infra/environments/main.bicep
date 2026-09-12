@@ -434,6 +434,18 @@ resource aks 'Microsoft.ContainerService/managedClusters@2024-02-01' = {
   }
 }
 
+resource workloadIdentityFederatedCredential 'Microsoft.ManagedIdentity/userAssignedIdentities/federatedIdentityCredentials@2022-01-31-preview' = {
+  parent: workloadIdentity
+  name: 'retailpulse-app'
+  properties: {
+    issuer: aks.properties.oidcIssuerProfile.issuerURL
+    subject: 'system:serviceaccount:retailpulse:retailpulse-app'
+    audiences: [
+      'api://AzureADTokenExchange'
+    ]
+  }
+}
+
 resource aksAcrPullRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   name: guid(containerRegistry.id, aks.id, 'AcrPull')
   scope: containerRegistry

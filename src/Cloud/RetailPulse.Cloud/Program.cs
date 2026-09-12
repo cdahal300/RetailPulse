@@ -45,6 +45,7 @@ var useSqliteCloudLedger = builder.Configuration.GetValue<bool>("RetailPulse:Use
 var pushVapidPublicKey = builder.Configuration["Push:VapidPublicKey"];
 var pushVapidPrivateKey = builder.Configuration["Push:VapidPrivateKey"];
 var serviceBusNamespace = builder.Configuration["ServiceBus:FullyQualifiedNamespace"];
+var useEventAnalytics = builder.Configuration.GetValue<bool>("Analytics:UseEventFacts");
 builder.Services.AddSingleton<IPushNotificationQueue, PushNotificationQueue>();
 builder.Services.AddSingleton<IIdentityAuditEmitter>(_ => useSqliteCloudLedger || string.IsNullOrWhiteSpace(postgresConnectionString)
     ? new NoOpIdentityAuditEmitter()
@@ -57,7 +58,7 @@ builder.Services.AddSingleton<IIdentityRevocationStore>(_ => useSqliteCloudLedge
     : new PostgresIdentityRevocationStore(postgresConnectionString));
 builder.Services.AddSingleton<IDomainEventPublisher>(services => string.IsNullOrWhiteSpace(serviceBusNamespace)
     ? new NoOpDomainEventPublisher()
-    : new ServiceBusDomainEventPublisher(serviceBusNamespace, services.GetRequiredService<IPushNotificationQueue>()));
+    : new ServiceBusDomainEventPublisher(serviceBusNamespace, services.GetRequiredService<IPushNotificationQueue>(), services.GetRequiredService<AnalyticsEventIngestor>()));
 builder.Services.AddSingleton<ICatalogRepository, CloudCatalogRepository>();
 builder.Services.AddSingleton<IInventoryLedgerRepository>(_ => useSqliteCloudLedger || string.IsNullOrWhiteSpace(postgresConnectionString)
     ? new SqliteInventoryLedger(cloudDatabasePath)
@@ -73,6 +74,7 @@ builder.Services.AddSingleton<IStoreSettingsRepository>(_ => new PostgresStoreSe
 builder.Services.AddSingleton<IAnalyticsFactStore>(_ => useSqliteCloudLedger || string.IsNullOrWhiteSpace(postgresConnectionString)
     ? new InMemoryAnalyticsFactStore()
     : new PostgresAnalyticsFactStore(postgresConnectionString));
+builder.Services.AddSingleton<AnalyticsEventIngestor>();
 builder.Services.AddSingleton<IInsightsService, InMemoryInsightsService>();
 builder.Services.AddSingleton<IPushSubscriptionStore>(_ => new PostgresPushSubscriptionStore(useSqliteCloudLedger ? null : postgresConnectionString));
 builder.Services.AddSingleton<IPushNotificationSender>(_ =>
@@ -80,7 +82,9 @@ builder.Services.AddSingleton<IPushNotificationSender>(_ =>
         ? new NoOpPushNotificationSender()
         : new VapidPushNotificationSender(pushVapidPublicKey, pushVapidPrivateKey));
     builder.Services.AddHostedService<PushNotificationWorker>();
-builder.Services.AddSingleton<IAnalyticsReportProvider, SimulatedAnalyticsReportProvider>();
+builder.Services.AddSingleton<IAnalyticsReportProvider>(services => useEventAnalytics
+    ? new EventAnalyticsReportProvider(services.GetRequiredService<IAnalyticsFactStore>())
+    : new SimulatedAnalyticsReportProvider());
 
 var app = builder.Build();
 if (!useSqliteCloudLedger && !string.IsNullOrWhiteSpace(postgresConnectionString))

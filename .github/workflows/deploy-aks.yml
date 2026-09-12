@@ -323,7 +323,15 @@ jobs:
       - name: Rollback guidance
         if: failure()
         shell: bash
+        env:
+          AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+          AKS_CLUSTER_NAME: ${{ vars.AKS_CLUSTER_NAME }}
         run: |
+          echo 'Workload identity diagnostics:'
+          az aks show --resource-group "$AZURE_RESOURCE_GROUP" --name "$AKS_CLUSTER_NAME" --query 'properties.oidcIssuerProfile.issuerUrl' -o tsv || true
+          az identity show --resource-group "$AZURE_RESOURCE_GROUP" --name "retailpulse-dev-uami" --query '{clientId:clientId,principalId:principalId}' -o json || true
+          az identity federated-credential list --resource-group "$AZURE_RESOURCE_GROUP" --identity-name "retailpulse-dev-uami" --query '[].{name:name,issuer:issuer,subject:subject,audiences:audiences}' -o json || true
+          kubectl get serviceaccount retailpulse-app -n retailpulse -o yaml || true
           echo 'Cloud API pod diagnostics:'
           kubectl get pods -n retailpulse -l app=cloud-api -o wide || true
           kubectl describe pods -n retailpulse -l app=cloud-api || true

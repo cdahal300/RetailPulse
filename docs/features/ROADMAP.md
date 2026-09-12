@@ -29,7 +29,7 @@ Feature folders currently begin as planning briefs. Before an implementation sta
 | FEAT-009 | Manager and owner PWA | Web / PWA | Implementation complete; staging evidence pending |
 | FEAT-010 | Analytics and reporting | Cloud / Analytics | Event-backed dev slice complete; production hardening pending |
 | FEAT-011 | External payment-provider adapter | Edge / External | Adapter boundary complete; provider certification pending |
-| FEAT-012 | Feature-flag controlled rollout | Platform | Definition of Ready complete; design accepted |
+| FEAT-012 | Feature-flag controlled rollout | Platform | Provider-neutral dev slice complete; production provider hardening pending |
 | FEAT-013 | AI insights | Analytics / Cloud | Definition of Ready complete; asynchronous only |
 
 ## Delivery rule

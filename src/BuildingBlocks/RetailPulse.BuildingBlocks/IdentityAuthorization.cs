@@ -16,7 +16,11 @@ public enum AuthorizationAction
     ViewSyncHealth,
     ManageNotificationPreferences,
     ViewInsights,
-    ReprocessAnalytics
+    ReprocessAnalytics,
+    ViewFeatureFlags,
+    ManageFeatureFlags,
+    ApproveFeatureFlags,
+    RollbackFeatureFlags
 }
 
 public enum AuthorizationFailure
@@ -125,6 +129,10 @@ public static class IdentityAuthorizationPolicy
         AuthorizationAction.RevokeDevice => [IdentityRole.Owner],
         AuthorizationAction.ManageRoles => [IdentityRole.Owner],
         AuthorizationAction.ReprocessAnalytics => [IdentityRole.Owner],
+        AuthorizationAction.ViewFeatureFlags => [IdentityRole.Manager],
+        AuthorizationAction.ManageFeatureFlags => [IdentityRole.Owner],
+        AuthorizationAction.ApproveFeatureFlags => [IdentityRole.Owner],
+        AuthorizationAction.RollbackFeatureFlags => [IdentityRole.Owner],
         _ => []
     };
 }

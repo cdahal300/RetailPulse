@@ -135,6 +135,7 @@ const cacheKeyPrefix = 'retailpulse.analytics.sales'
 const commandQueueKey = 'retailpulse.manager.commands.v1'
 const storageScopeKey = 'retailpulse.portal.storage-scope'
 const cacheMaxAgeMs = 24 * 60 * 60 * 1000
+const displayTimeZone = 'America/New_York'
 
 function App() {
   const [storeId, setStoreId] = useState(stores[0].id)
@@ -161,6 +162,12 @@ function App() {
   const [settingsSaving, setSettingsSaving] = useState(false)
   const [insight, setInsight] = useState<InsightResult | null>(null)
   const [insightError, setInsightError] = useState<string | null>(null)
+  const [currentTime, setCurrentTime] = useState(() => new Date())
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setCurrentTime(new Date()), 1000)
+    return () => window.clearInterval(timer)
+  }, [])
 
   useEffect(() => {
     if (demoMode || !entraConfigured) {
@@ -355,7 +362,7 @@ function App() {
           <div>
             <p className="eyebrow">Manager workspace</p>
             <h1>Good morning</h1>
-            <p>{selectedStore.market} · {report.summary.timeZone} · {formatDate(report.summary.to)}</p>
+            <p>{selectedStore.market} · Eastern Time · {formatDate(currentTime.toISOString())} · {formatClock(currentTime.toISOString())}</p>
           </div>
           <div className="toolbar" aria-label="Dashboard controls">
             <label className="select-shell">
@@ -1035,15 +1042,19 @@ function formatMoney(minorUnits: number, currency: string) {
 }
 
 function formatTime(value: string) {
-  return new Intl.DateTimeFormat('en-US', { hour: 'numeric', minute: '2-digit' }).format(new Date(value))
+  return new Intl.DateTimeFormat('en-US', { hour: 'numeric', minute: '2-digit', timeZone: displayTimeZone }).format(new Date(value))
 }
 
 function formatDate(value: string) {
-  return new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric' }).format(new Date(value))
+  return new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', timeZone: displayTimeZone }).format(new Date(value))
+}
+
+function formatClock(value: string) {
+  return new Intl.DateTimeFormat('en-US', { hour: 'numeric', minute: '2-digit', second: '2-digit', timeZoneName: 'short', timeZone: displayTimeZone }).format(new Date(value))
 }
 
 function formatHour(value: string) {
-  return new Intl.DateTimeFormat('en-US', { hour: 'numeric', minute: '2-digit' }).format(new Date(value))
+  return new Intl.DateTimeFormat('en-US', { hour: 'numeric', minute: '2-digit', timeZone: displayTimeZone }).format(new Date(value))
 }
 
 export default App

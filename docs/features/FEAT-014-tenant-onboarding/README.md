@@ -55,6 +55,18 @@ As a business owner, I want to create my retail business, add multiple locations
 6. The owner completes catalog, notification, and integration setup.
 7. The system runs a tenant isolation and authorization check before activation.
 
+## Development scenarios
+
+Use [`scripts/seed-tenant-scenarios.sh`](../../../scripts/seed-tenant-scenarios.sh) against a Development Cloud API to seed repeatable sales events for mockups and isolation validation:
+
+```bash
+./scripts/seed-tenant-scenarios.sh owner-three-stores
+./scripts/seed-tenant-scenarios.sh manager-single-store
+./scripts/seed-tenant-scenarios.sh second-tenant
+```
+
+The scenarios represent one owner with three locations, a manager restricted to one location, and an independent second customer tenant. They seed development analytics events only; they do not create production tenants, invitations, memberships, or devices.
+
 ## Acceptance criteria
 
 - Given a new owner, when onboarding completes, then exactly one internal tenant and one owner membership are created idempotently.

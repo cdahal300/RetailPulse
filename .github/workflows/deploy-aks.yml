@@ -209,7 +209,7 @@ jobs:
               exit 1
             fi
           done
-          ./scripts/azure/deploy-infra.sh \
+          bash ./scripts/azure/deploy-infra.sh \
             "${{ vars.AZURE_SUBSCRIPTION_ID }}" \
             "$AZURE_RESOURCE_GROUP" \
             "$AZURE_LOCATION" \

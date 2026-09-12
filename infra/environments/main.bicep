@@ -218,11 +218,11 @@ resource keyVault 'Microsoft.KeyVault/vaults@2023-07-01' = {
     }
     enableRbacAuthorization: true
     enablePurgeProtection: true
-    publicNetworkAccess: 'Disabled'
+    publicNetworkAccess: environment == 'prod' ? 'Disabled' : 'Enabled'
     softDeleteRetentionInDays: 90
     networkAcls: {
       bypass: 'AzureServices'
-      defaultAction: 'Deny'
+      defaultAction: environment == 'prod' ? 'Deny' : 'Allow'
     }
   }
 }
@@ -431,6 +431,18 @@ resource aks 'Microsoft.ContainerService/managedClusters@2024-02-01' = {
       loadBalancerSku: 'standard'
       outboundType: 'loadBalancer'
     }
+  }
+}
+
+resource workloadIdentityFederatedCredential 'Microsoft.ManagedIdentity/userAssignedIdentities/federatedIdentityCredentials@2022-01-31-preview' = {
+  parent: workloadIdentity
+  name: 'retailpulse-app'
+  properties: {
+    issuer: aks.properties.oidcIssuerProfile.issuerURL
+    subject: 'system:serviceaccount:retailpulse:retailpulse-app'
+    audiences: [
+      'api://AzureADTokenExchange'
+    ]
   }
 }
 

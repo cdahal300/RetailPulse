@@ -209,7 +209,7 @@ jobs:
               exit 1
             fi
           done
-          ./scripts/azure/deploy-infra.sh \
+          bash ./scripts/azure/deploy-infra.sh \
             "${{ vars.AZURE_SUBSCRIPTION_ID }}" \
             "$AZURE_RESOURCE_GROUP" \
             "$AZURE_LOCATION" \
@@ -259,6 +259,7 @@ jobs:
           SERVICE_BUS_NAMESPACE: ${{ vars.SERVICE_BUS_FULLY_QUALIFIED_NAMESPACE }}
           PUSH_VAPID_PUBLIC_KEY: ${{ vars.PUSH_VAPID_PUBLIC_KEY }}
           KEY_VAULT_URI: ${{ vars.KEY_VAULT_URI }}
+          AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
         run: |
           set -euo pipefail
           work_dir="$RUNNER_TEMP/kubernetes"
@@ -283,8 +284,20 @@ jobs:
           EOF
           kubectl kustomize "$work_dir/overlays/${OVERLAY}" > "$rendered"
           kubectl apply -f "$rendered"
+          WORKLOAD_IDENTITY_CLIENT_ID="$(az identity show \
+            --resource-group "$AZURE_RESOURCE_GROUP" \
+            --name "retailpulse-${OVERLAY}-uami" \
+            --query clientId -o tsv)"
+          if [[ -z "$WORKLOAD_IDENTITY_CLIENT_ID" ]]; then
+            echo "Unable to resolve workload identity client ID."
+            exit 1
+          fi
+          kubectl annotate serviceaccount retailpulse-app -n retailpulse \
+            azure.workload.identity/client-id="$WORKLOAD_IDENTITY_CLIENT_ID" \
+            --overwrite
           kubectl patch configmap retailpulse-config -n retailpulse --type merge -p "$(jq -n --arg serviceBus "$SERVICE_BUS_NAMESPACE" --arg vapid "$PUSH_VAPID_PUBLIC_KEY" --arg keyVault "$KEY_VAULT_URI" '{data:{ServiceBus__FullyQualifiedNamespace:$serviceBus,Push__VapidPublicKey:$vapid,AzureKeyVault__VaultUri:$keyVault}}')"
           kubectl rollout restart deployment/cloud-api -n retailpulse
+          kubectl rollout restart deployment/edge-api -n retailpulse
           kubectl annotate deployment/cloud-api -n retailpulse \
             retailpulse.com/commit-sha="${GITHUB_SHA}" \
             retailpulse.com/image-digest="${{ needs.build.outputs.cloud_digest }}" \
@@ -318,7 +331,23 @@ jobs:
       - name: Rollback guidance
         if: failure()
         shell: bash
+        env:
+          AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+          AKS_CLUSTER_NAME: ${{ vars.AKS_CLUSTER_NAME }}
         run: |
+          echo 'Workload identity diagnostics:'
+          az aks show --resource-group "$AZURE_RESOURCE_GROUP" --name "$AKS_CLUSTER_NAME" --query 'properties.oidcIssuerProfile.issuerUrl' -o tsv || true
+          az identity show --resource-group "$AZURE_RESOURCE_GROUP" --name "retailpulse-dev-uami" --query '{clientId:clientId,principalId:principalId}' -o json || true
+          az identity federated-credential list --resource-group "$AZURE_RESOURCE_GROUP" --identity-name "retailpulse-dev-uami" --query '[].{name:name,issuer:issuer,subject:subject,audiences:audiences}' -o json || true
+          kubectl get serviceaccount retailpulse-app -n retailpulse -o yaml || true
+          echo 'Cloud API pod diagnostics:'
+          kubectl get pods -n retailpulse -l app=cloud-api -o wide || true
+          kubectl describe pods -n retailpulse -l app=cloud-api || true
+          kubectl logs -n retailpulse -l app=cloud-api --all-containers=true --tail=200 || true
+          echo 'Edge API pod diagnostics:'
+          kubectl get pods -n retailpulse -l app=edge-api -o wide || true
+          kubectl describe pods -n retailpulse -l app=edge-api || true
+          kubectl logs -n retailpulse -l app=edge-api --all-containers=true --tail=200 || true
           cat <<'ROLLBACK'
           Deployment failed. Stop promotion and redeploy the previous known-good image digest, for example:
             kubectl set image deployment/cloud-api cloud-api=<previous-cloud-image-digest> -n retailpulse

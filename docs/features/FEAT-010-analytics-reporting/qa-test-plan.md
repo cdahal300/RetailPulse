@@ -27,3 +27,10 @@
 - Required environment: disposable Service Bus/stream, ADLS Gen2, PostgreSQL/read model, seeded multi-tenant data, and timezone/currency fixtures.
 - Evidence artifact: reconciliation report, duplicate/late-event results, freshness dashboard, authorization report, and query benchmark.
 - Known gaps: production-scale ADLS cost and regional replay require staging load rehearsal.
+
+## Verified Dev Slice
+
+- Unit tests cover sale-event mapping, source-event deduplication, tenant/store filtering, aggregation, and freshness metadata.
+- Dev deployment passed AKS rollout and health smoke tests.
+- Authenticated dev seed plus PWA report query returned `event-facts` with complete freshness metadata.
+- Release evidence still requires durable stream/ADLS replay, late-event correction, multi-tenant integration tests, and performance benchmarking.

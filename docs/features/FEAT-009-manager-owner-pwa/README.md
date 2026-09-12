@@ -4,6 +4,13 @@
 
 Implementation complete; staging release evidence remains pending. The MVP slices include an Entra-authenticated manager dashboard with live sales, tenant/store-scoped sync-health data, authorized inventory commands that can queue safely while offline, browser notification lifecycle handling, and scoped cache cleanup.
 
+## Verified Dev Evidence
+
+- Android Chrome installation and offline cached-dashboard launch passed.
+- Dev API report reads passed through the PWA with live API and event-backed freshness metadata.
+- Service-worker app-shell caching and online recovery were verified.
+- Pending: real Entra sign-in, iPhone Safari, VAPID push delivery/deep-link, and PostgreSQL integration evidence.
+
 ## Outcome
 
 As a manager or owner, I want secure mobile access to store performance and operational actions without installing a native app.

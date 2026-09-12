@@ -2,6 +2,8 @@
 
 ## Functional behavior
 
+Current status: the dashboard, offline cache, service-worker, and dev API paths are implemented and verified. Staging identity, iOS, push, and database evidence remains pending.
+
 - Given an authenticated manager or owner, when the PWA loads, then role-aware sales, inventory, sync-health, alerts, settings, and AI views show only authorized data.
 - Given a supported desktop, tablet, Android, or iOS browser, when the user navigates and performs an allowed command, then controls remain usable and status distinguishes pending from confirmed.
 - Given an offline launch, when cached data exists, then the PWA shows clearly labeled stale read-only data and queues only explicitly supported commands.

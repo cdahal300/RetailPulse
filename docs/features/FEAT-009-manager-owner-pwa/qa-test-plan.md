@@ -27,3 +27,9 @@
 - Required environment: staging cloud APIs, test identities/roles/stores, HTTPS origin, push test service, and iOS/Android devices.
 - Evidence artifact: browser/device matrix, accessibility report, cache/offline recording, bundle metrics, and auth denial report.
 - Known gaps: browser push support and background behavior vary by OS/version and require a maintained support matrix.
+
+## Verified Dev Slice
+
+- Android Chrome: install, offline launch, cached reads, and stale/offline labeling passed.
+- Dev PWA: live API and event-backed report source displayed successfully.
+- Release approval still requires the staging evidence listed above.

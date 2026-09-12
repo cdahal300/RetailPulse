@@ -1,18 +1,22 @@
 import {
   AlertTriangle,
+  ArrowUpRight,
+  Activity,
   BarChart3,
   Bell,
+  ClipboardList,
   ChevronDown,
   CircleDollarSign,
   Clock3,
   CloudOff,
   Download,
   LineChart,
+  LayoutDashboard,
   PackageCheck,
   RefreshCw,
   ShieldCheck,
+  Sparkles,
   Store,
-  Wifi,
 } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { entraConfigured, getPortalSession, signIn, signOut, type PortalSession } from './auth'
@@ -131,6 +135,7 @@ const cacheKeyPrefix = 'retailpulse.analytics.sales'
 const commandQueueKey = 'retailpulse.manager.commands.v1'
 const storageScopeKey = 'retailpulse.portal.storage-scope'
 const cacheMaxAgeMs = 24 * 60 * 60 * 1000
+const displayTimeZone = 'America/New_York'
 
 function App() {
   const [storeId, setStoreId] = useState(stores[0].id)
@@ -157,6 +162,12 @@ function App() {
   const [settingsSaving, setSettingsSaving] = useState(false)
   const [insight, setInsight] = useState<InsightResult | null>(null)
   const [insightError, setInsightError] = useState<string | null>(null)
+  const [currentTime, setCurrentTime] = useState(() => new Date())
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setCurrentTime(new Date()), 1000)
+    return () => window.clearInterval(timer)
+  }, [])
 
   useEffect(() => {
     if (demoMode || !entraConfigured) {
@@ -326,10 +337,10 @@ function App() {
           </div>
         </div>
         <nav className="nav-list" aria-label="Dashboard sections">
-          <a className="nav-item active" href="#sales"><BarChart3 size={18} />Sales</a>
+          <a className="nav-item active" href="#overview"><LayoutDashboard size={18} />Overview</a>
           <a className="nav-item" href="#inventory"><PackageCheck size={18} />Inventory</a>
-          <a className="nav-item" href="#alerts"><Bell size={18} />Alerts</a>
-          <a className="nav-item" href="#sync"><Wifi size={18} />Sync</a>
+          <a className="nav-item" href="#alerts"><Bell size={18} />Alerts{alerts.length > 0 ? <span className="nav-count">{alerts.length}</span> : null}</a>
+          <a className="nav-item" href="#sync"><Activity size={18} />Sync</a>
         </nav>
         <div className="session-card">
           <ShieldCheck size={18} />
@@ -347,11 +358,11 @@ function App() {
       </aside>
 
       <section className="workspace" aria-label="Manager dashboard">
-        <header className="topbar">
+        <header className="topbar" id="overview">
           <div>
-            <p className="eyebrow">Operations cockpit</p>
-            <h1>{selectedStore.name}</h1>
-            <p>{selectedStore.market} · Today · {report.summary.timeZone}</p>
+            <p className="eyebrow">Manager workspace</p>
+            <h1>Good morning</h1>
+            <p>{selectedStore.market} · Eastern Time · {formatDate(currentTime.toISOString())} · {formatClock(currentTime.toISOString())}</p>
           </div>
           <div className="toolbar" aria-label="Dashboard controls">
             <label className="select-shell">
@@ -372,6 +383,20 @@ function App() {
           </div>
         </header>
 
+        <section className="pulse-hero" aria-labelledby="store-pulse-title">
+          <div className="pulse-copy">
+            <div className="pulse-kicker"><span className="pulse-dot" />Store pulse</div>
+            <h2 id="store-pulse-title">{selectedStore.name}</h2>
+            <p>See what needs attention before the next trading window.</p>
+          </div>
+          <div className="pulse-action">
+            <span className="pulse-action-label">Next safe action</span>
+            <strong>{alerts[0]?.title ?? (syncHealth?.pendingCount ? 'Review sync queue' : 'Review today\'s sales')}</strong>
+            <a href={alerts[0] ? '#alerts' : '#sales'}>Open workspace <ArrowUpRight size={15} /></a>
+          </div>
+          <Sparkles className="pulse-spark" size={30} aria-hidden="true" />
+        </section>
+
         <section className="status-strip" aria-label="Data status">
           <StatusPill state={dashboardState} />
           <span>Source: {report.summary.freshness.dataSource}</span>
@@ -381,6 +406,30 @@ function App() {
 
         {authError ? <p className="inline-alert"><CloudOff size={16} />{authError}</p> : null}
         {lastError ? <p className="inline-alert"><CloudOff size={16} />Using cached or built-in simulated data: {lastError}</p> : null}
+
+        <section className="priority-layout" aria-label="Priority overview">
+          <article className="priority-panel">
+            <div className="panel-heading compact-heading">
+              <div>
+                <p className="eyebrow">Priority queue</p>
+                <h2>Today's focus</h2>
+              </div>
+              <ClipboardList size={20} />
+            </div>
+            {alerts.length > 0 ? <div className="priority-list">{alerts.slice(0, 2).map((alert) => <a className="priority-item" href="#alerts" key={alert.alertId}><span className={`priority-severity ${alert.severity.toLowerCase()}`} /><span><strong>{alert.title}</strong><small>{alert.detail}</small></span><ArrowUpRight size={16} /></a>)}</div> : <div className="priority-empty"><span className="priority-check"><ShieldCheck size={16} /></span><span><strong>No urgent issues</strong><small>{syncHealth?.pendingCount ? `${syncHealth.pendingCount} item${syncHealth.pendingCount === 1 ? '' : 's'} still syncing.` : 'Your store is ready for the next trading window.'}</small></span></div>}
+          </article>
+          <article className="priority-panel readiness-card">
+            <div className="panel-heading compact-heading">
+              <div>
+                <p className="eyebrow">Trust signal</p>
+                <h2>Data confidence</h2>
+              </div>
+              <ShieldCheck size={20} />
+            </div>
+            <div className="confidence-value"><span className={`confidence-dot ${dashboardState}`} />{dashboardState === 'fresh' ? 'Live and current' : dashboardState === 'cached' ? 'Cached read' : dashboardState === 'offline' ? 'Offline mode' : 'Checking data'}</div>
+            <p className="confidence-detail">Source: {report.summary.freshness.dataSource} · Last event {formatTime(report.summary.freshness.lastSourceEventAt)}</p>
+          </article>
+        </section>
 
         <section className="kpi-grid" aria-label="Sales summary">
           <Metric label="Net sales" value={formatMoney(report.summary.netSalesMinor, report.summary.currency)} trend="+8.4% vs same window" icon={<CircleDollarSign size={20} />} />
@@ -798,6 +847,7 @@ async function submitInventoryAdjustment(
     expectedVersion: 0,
   }
   setSubmitting(true)
+
   setStatus(null)
 
   try {
@@ -992,11 +1042,19 @@ function formatMoney(minorUnits: number, currency: string) {
 }
 
 function formatTime(value: string) {
-  return new Intl.DateTimeFormat('en-US', { hour: 'numeric', minute: '2-digit' }).format(new Date(value))
+  return new Intl.DateTimeFormat('en-US', { hour: 'numeric', minute: '2-digit', timeZone: displayTimeZone }).format(new Date(value))
+}
+
+function formatDate(value: string) {
+  return new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', timeZone: displayTimeZone }).format(new Date(value))
+}
+
+function formatClock(value: string) {
+  return new Intl.DateTimeFormat('en-US', { hour: 'numeric', minute: '2-digit', second: '2-digit', timeZoneName: 'short', timeZone: displayTimeZone }).format(new Date(value))
 }
 
 function formatHour(value: string) {
-  return new Intl.DateTimeFormat('en-US', { hour: 'numeric', minute: '2-digit' }).format(new Date(value))
+  return new Intl.DateTimeFormat('en-US', { hour: 'numeric', minute: '2-digit', timeZone: displayTimeZone }).format(new Date(value))
 }
 
 export default App

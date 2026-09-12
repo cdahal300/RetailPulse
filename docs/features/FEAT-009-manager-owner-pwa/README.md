@@ -31,6 +31,12 @@ As a manager or owner, I want secure mobile access to store performance and oper
 - Production-only service worker registration to avoid stale assets during local Vite development.
 - Configurable Entra/MSAL browser session with a sign-in gate; synthetic manager identity is limited to explicit local demo mode.
 
+## Modern view direction
+
+The next PWA slice is a role-aware operations cockpit: a priority-first overview, dedicated manager worklists for inventory, alerts, and sync, and an owner reporting/insights workspace. The design preserves explicit freshness and offline states, server-authorized commands, scoped non-sensitive caching, and advisory-only AI output.
+
+See the [modern view plan](modern-view-plan.md) for information architecture, responsive behavior, visual direction, implementation slices, and success measures.
+
 ## Acceptance criteria
 
 - Works on supported desktop, tablet, Android, and iOS browsers.

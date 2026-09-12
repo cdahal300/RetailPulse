@@ -32,3 +32,10 @@ Current status: the dashboard, offline cache, service-worker, and dev API paths 
 - Audit requirements: record sign-in, command submission/result, notification preference changes, and privileged actions server-side.
 - Retention and deletion: bound IndexedDB/cache retention and clear user/store data on logout, expiry, or documented reset.
 - Use secure cookies/token handling, CSP, dependency scanning, XSS/CSRF protections, service-worker scope controls, and accessible error states.
+
+## Modern view acceptance additions
+
+- Given a manager opens the PWA, when the overview renders, then freshness, the highest-priority operational issue, and the next safe action are visible without opening another view.
+- Given a phone viewport, when the manager navigates, then Overview, Inventory, Alerts, and More remain reachable through touch-sized controls without horizontal scrolling.
+- Given an owner opens insights, when an advisory result is displayed, then model, prompt, validation, and source metadata remain visible beside the summary.
+- Given cached, partial, reviewable, or unavailable data, when a view renders, then the state is explicit and the UI does not present it as current verified data.

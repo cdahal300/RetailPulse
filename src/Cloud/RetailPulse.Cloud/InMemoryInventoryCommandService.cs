@@ -2,7 +2,7 @@ using RetailPulse.BuildingBlocks;
 
 namespace RetailPulse.Cloud;
 
-public sealed class InMemoryInventoryCommandService(CatalogInventoryService inventory) : IInventoryCommandService
+public sealed class InMemoryInventoryCommandService(CatalogInventoryService inventory, IDomainEventPublisher events) : IInventoryCommandService
 {
     public Task<InventoryAdjustmentResult> AdjustInventoryAsync(InventoryAdjustmentCommand command, CancellationToken cancellationToken = default)
     {
@@ -29,6 +29,11 @@ public sealed class InMemoryInventoryCommandService(CatalogInventoryService inve
             CatalogInventoryRole.Manager,
             command.CommandId,
             command.CorrelationId), cancellationToken);
+
+        foreach (var domainEvent in result.Events)
+        {
+            await events.PublishAsync(domainEvent.GetType().Name, domainEvent, cancellationToken);
+        }
 
         if (result.Outcome == InventoryAppendOutcome.Appended)
         {

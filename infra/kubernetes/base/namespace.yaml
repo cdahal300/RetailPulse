@@ -19,6 +19,7 @@ data:
   Entra__TenantId: ""
   Entra__Audience: ""
   Portal__AllowedOrigins: ""
+  AzureKeyVault__VaultUri: ""
   ServiceBus__FullyQualifiedNamespace: ""
   Push__VapidPublicKey: ""
 ---

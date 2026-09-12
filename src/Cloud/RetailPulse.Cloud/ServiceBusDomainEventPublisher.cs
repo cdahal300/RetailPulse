@@ -14,11 +14,13 @@ public sealed class ServiceBusDomainEventPublisher : IDomainEventPublisher, IAsy
 {
     private readonly ServiceBusClient client;
     private readonly ServiceBusSender sender;
+    private readonly IPushNotificationQueue pushQueue;
 
-    public ServiceBusDomainEventPublisher(string fullyQualifiedNamespace, string topicName = "retailpulse-events")
+    public ServiceBusDomainEventPublisher(string fullyQualifiedNamespace, IPushNotificationQueue pushQueue, string topicName = "retailpulse-events")
     {
         client = new ServiceBusClient(fullyQualifiedNamespace, new DefaultAzureCredential());
         sender = client.CreateSender(topicName);
+        this.pushQueue = pushQueue;
     }
 
     public async Task PublishAsync(string eventType, object payload, CancellationToken cancellationToken = default)
@@ -33,6 +35,10 @@ public sealed class ServiceBusDomainEventPublisher : IDomainEventPublisher, IAsy
             MessageId = eventId ?? Guid.NewGuid().ToString("N")
         };
         await sender.SendMessageAsync(message, cancellationToken);
+        if (eventType is nameof(LowStockDetectedV1))
+        {
+            await pushQueue.EnqueueAsync(new PushNotificationWorkItem(eventType, json), cancellationToken);
+        }
     }
 
     public async ValueTask DisposeAsync()

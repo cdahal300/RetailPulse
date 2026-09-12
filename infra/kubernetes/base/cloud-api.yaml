@@ -78,6 +78,11 @@ spec:
             configMapKeyRef:
               name: retailpulse-config
               key: Portal__AllowedOrigins
+        - name: AzureKeyVault__VaultUri
+          valueFrom:
+            configMapKeyRef:
+              name: retailpulse-config
+              key: AzureKeyVault__VaultUri
         - name: ServiceBus__FullyQualifiedNamespace
           valueFrom:
             configMapKeyRef:

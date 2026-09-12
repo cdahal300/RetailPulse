@@ -267,6 +267,19 @@ resource serviceBusSenderRoleAssignment 'Microsoft.Authorization/roleAssignments
   }
 }
 
+resource keyVaultSecretsUserRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(keyVault.id, workloadIdentity.id, 'KeyVaultSecretsUser')
+  scope: keyVault
+  properties: {
+    roleDefinitionId: subscriptionResourceId(
+      'Microsoft.Authorization/roleDefinitions',
+      '4633458b-17de-408a-b874-0445c86b69e6'
+    )
+    principalId: workloadIdentity.properties.principalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
 resource storage 'Microsoft.Storage/storageAccounts@2023-05-01' = {
   name: storageName
   location: location
@@ -441,6 +454,7 @@ output aksClusterPrincipalId string = aks.identity.principalId
 output workloadIdentityClientId string = workloadIdentity.properties.clientId
 output acrLoginServer string = containerRegistry.properties.loginServer
 output keyVaultName string = keyVault.name
+output keyVaultUri string = keyVault.properties.vaultUri
 output postgresServerName string = postgres.name
 output postgresDatabaseName string = postgresDb.name
 output serviceBusNamespace string = serviceBus.name
